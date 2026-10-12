@@ -10,6 +10,7 @@ import {
 } from "./runtime.js";
 export type { ExecResult } from "./types.js";
 import type { ExecResult } from "./types.js";
+import { wrapWithNetworkDeny } from "./network-guard.js";
 
 const isWin = process.platform === "win32";
 
@@ -413,6 +414,7 @@ export class PolyglotExecutor {
     timeout: number | undefined,
     background = false,
   ): Promise<ExecResult> {
+    cmd = wrapWithNetworkDeny(cmd, process.platform, process.env);
     return new Promise((res) => {
       // Only .cmd/.bat shims need shell on Windows; real executables don't.
       // Using shell: true globally causes process-tree kill issues with MSYS2/Git Bash.
