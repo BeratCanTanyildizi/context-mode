@@ -176,7 +176,7 @@ describe("VS Code Copilot hooks", () => {
       expect(result.exitCode).toBe(0);
       const out = JSON.parse(result.stdout);
       expect(out.hookSpecificOutput.updatedInput.command).toContain("context-mode");
-      expect(out.hookSpecificOutput.updatedInput.command).toContain("ctx_fetch_and_index");
+      expect(out.hookSpecificOutput.updatedInput.command).toContain("no network access");
     });
 
     test("run_in_terminal: safe short command passes through with guidance", () => {

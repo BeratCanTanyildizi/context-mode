@@ -229,6 +229,6 @@ export class PiAdapter extends BaseAdapter implements HookAdapter {
   }
 
   getRoutingInstructions(): string {
-    return "# context-mode\n\nUse context-mode MCP tools (ctx_execute, ctx_execute_file, ctx_batch_execute, ctx_fetch_and_index, ctx_search) instead of inline shell/HTTP calls for data-heavy operations.";
+    return "# context-mode\n\nUse context-mode MCP tools (ctx_execute, ctx_execute_file, ctx_batch_execute, ctx_search, ctx_search) instead of inline shell/HTTP calls for data-heavy operations.";
   }
 }

@@ -121,42 +121,29 @@ describe("D2 Phase 4 — webfetch-redirected marker pattern", () => {
   }
 
   // ─── Slice 4.1 ───────────────────────────────────────────
-  test("4.1: PreToolUse writes redirect marker on WebFetch", () => {
+  test("4.1: PreToolUse does not write a WebFetch redirect marker", () => {
     const r = runPre("https://docs.example.com/long-page");
     assert.equal(r.status, 0, `pretooluse non-zero. stderr: ${r.stderr}`);
 
     const markerPath = resolve(tmpdir(), `context-mode-redirect-${sessionId}.txt`);
-    assert.ok(existsSync(markerPath), "marker file must be written");
-    const content = readFileSync(markerPath, "utf-8");
-    expect(content.startsWith("WebFetch:webfetch-redirected:16384:")).toBe(true);
-    expect(content).toContain("https://docs.example.com");
+    assert.equal(existsSync(markerPath), false);
   });
 
   // ─── Slice 4.2 ───────────────────────────────────────────
-  test("4.2: PostToolUse emits webfetch-redirected event with bytes_avoided=16384", () => {
+  test("4.2: PostToolUse does not emit a webfetch-redirected event", () => {
     runPre("https://example.com/article");
-    const post = runPost("WebFetch", { url: "https://example.com/article" }, "denied");
+    const post = runPost("WebFetch", { url: "https://example.com/article" }, "page");
     assert.equal(post.status, 0, `posttooluse non-zero. stderr: ${post.stderr}`);
 
     const rows = readEvents(dbPath, sessionId, "webfetch-redirected");
-    expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows[0].category).toBe("redirect");
-    expect(rows[0].bytes_avoided).toBe(16384);
-    expect(rows[0].bytes_returned).toBe(0);
-    expect(rows[0].data).toContain("WebFetch:");
+    expect(rows.length).toBe(0);
   });
 
   // ─── Slice 4.3 ───────────────────────────────────────────
-  test("4.3: long URL truncated to 200 chars in marker", () => {
+  test("4.3: a long URL still does not write a redirect marker", () => {
     const longUrl = "https://example.com/" + "a".repeat(500);
     runPre(longUrl);
     const markerPath = resolve(tmpdir(), `context-mode-redirect-${sessionId}.txt`);
-    const content = readFileSync(markerPath, "utf-8");
-    const i1 = content.indexOf(":");
-    const i2 = content.indexOf(":", i1 + 1);
-    const i3 = content.indexOf(":", i2 + 1);
-    const summary = content.slice(i3 + 1);
-    expect(summary.length).toBeLessThanOrEqual(200);
-    expect(summary.length).toBeGreaterThan(0);
+    assert.equal(existsSync(markerPath), false);
   });
 });

@@ -103,12 +103,6 @@ describe("cli.bundle.mjs — marketplace install support", () => {
     expect(src).toContain('endsWith("\\\\build")');
   });
 
-  it("cli.ts upgrade copies cli.bundle.mjs to target", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    expect(src).toContain('"cli.bundle.mjs"');
-    // Must be in the items array for in-place update
-    expect(src).toMatch(/items\s*=\s*\[[\s\S]*?"cli\.bundle\.mjs"/);
-  });
 
   it("cli.ts exposes index/search commands for terminal knowledge-base access", () => {
     const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
@@ -120,40 +114,8 @@ describe("cli.bundle.mjs — marketplace install support", () => {
     expect(src).toContain("searchWithFallback");
   });
 
-  it("cli.ts upgrade doctor call prefers cli.bundle.mjs with fallback", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    expect(src).toContain("cli.bundle.mjs");
-    expect(src).toContain("build");
-    expect(src).toContain("cli.js");
-    // Must use existsSync for fallback
-    expect(src).toContain("existsSync");
-  });
 
-  it("cli.ts upgrade refreshes better-sqlite3 native addon after deps install", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    // Extract only the upgrade function body (starts with "async function upgrade")
-    const upgradeStart = src.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(-1);
-    const upgradeSrc = src.slice(upgradeStart);
-    // Must refresh native addons between production deps and global install.
-    // Compatibility must be delegated to hooks/ensure-deps.mjs so stale ABI
-    // binaries are repaired before upgrade declares native addons healthy.
-    const depsIdx = upgradeSrc.indexOf('"install", "--production"');
-    const refreshIdx = upgradeSrc.indexOf('"ensure-deps.mjs"');
-    const globalIdx = upgradeSrc.indexOf('"install", "-g"');
-    expect(depsIdx).toBeGreaterThan(-1);
-    expect(refreshIdx).toBeGreaterThan(-1);
-    expect(globalIdx).toBeGreaterThan(-1);
-    // refresh step must come after deps and before global install
-    expect(refreshIdx).toBeGreaterThan(depsIdx);
-    expect(refreshIdx).toBeLessThan(globalIdx);
-  });
 
-  it("cli.ts upgrade chmod handles both cli binaries", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    // Must chmod both build/cli.js and cli.bundle.mjs
-    expect(src).toMatch(/for\s*\(.*\["build\/cli\.js",\s*"cli\.bundle\.mjs"\]/);
-  });
 
   // ── Skill files ────────────────────────────────────────────
 
@@ -195,63 +157,6 @@ describe("cli.bundle.mjs — marketplace install support", () => {
 // ── .mcp.json — MCP server config ────────────────────────────────────
 
 describe(".mcp.json — MCP server config", () => {
-  it("upgrade MUST NOT write `.mcp.json` into the plugin cache dir (Issue #609 architectural lock)", () => {
-    // Bug-class history this lock protects:
-    //   #411 introduced a `.mcp.json` write here with a CLAUDE_PLUGIN_ROOT
-    //   placeholder. That solved an absolute-path-bake symptom but kept the
-    //   write itself in place. Every /ctx-upgrade since then re-baked a
-    //   per-version .mcp.json. When Claude Code's native plugin auto-update
-    //   later copies the previous version's .mcp.json forward into the new
-    //   cache dir, the path goes stale → MODULE_NOT_FOUND on every MCP boot,
-    //   while ctx-doctor stays green (#609).
-    //
-    // Architectural fix: STOP writing `.mcp.json` from cli.ts entirely. The
-    // canonical MCP source is `.claude-plugin/plugin.json.mcpServers`
-    // (Claude Code upstream: mcpPluginIntegration.ts:131-212 reads it first).
-    // The post-bump `sweepStaleMcpJson` call removes any pre-existing files
-    // so the carry-forward vector cannot replay.
-    //
-    // This test enforces the architectural decision. Re-introducing the write
-    // would re-open the bug class regardless of which path shape is used
-    // (placeholder OR absolute) — the write itself is the surface area.
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    const upgradeStart = src.indexOf("async function upgrade");
-    const upgradeSrc = src.slice(upgradeStart);
-    // The items[] copy list must still NOT include .mcp.json (kept from #531).
-    const itemsMatch = upgradeSrc.match(/const items\s*=\s*\[([\s\S]*?)\];/);
-    expect(itemsMatch).not.toBeNull();
-    expect(itemsMatch![1]).not.toContain(".mcp.json");
-    // cli.ts upgrade() MUST NOT write `.mcp.json` to pluginRoot. Any
-    // resolve(pluginRoot, ".mcp.json") + writeFileSync chain is forbidden.
-    expect(upgradeSrc).not.toMatch(/writeFileSync\(\s*resolve\(\s*pluginRoot\s*,\s*["']\.mcp\.json["']/);
-  });
-
-  it("upgrade MUST sweep stale .mcp.json files post-bump (Issue #609)", () => {
-    // Belt-and-braces partner to the no-write lock above: cli.ts MUST call
-    // `sweepStaleMcpJson` after `updatePluginRegistry` so any pre-existing
-    // copies left by prior versions (or carried forward by Claude Code's
-    // auto-update) are removed before the upgrade is declared successful.
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    // Import from the shared heal module — single source of truth.
-    expect(src).toMatch(
-      /sweepStaleMcpJson[^;]*from\s+["']\.\.\/scripts\/heal-installed-plugins\.mjs["']/,
-    );
-    const upgradeStart = src.indexOf("async function upgrade");
-    // Slice the whole upgrade region rather than a fixed-width window so
-    // pattern lookups stay valid as the function grows under feature work.
-    const upgradeSrc = src.slice(upgradeStart);
-    // Order constraint: sweep runs AFTER updatePluginRegistry so the
-    // cleanup operates against the final on-disk shape.
-    const updateIdx = upgradeSrc.indexOf("updatePluginRegistry");
-    const sweepIdx = upgradeSrc.indexOf("sweepStaleMcpJson");
-    expect(updateIdx).toBeGreaterThan(-1);
-    expect(sweepIdx).toBeGreaterThan(updateIdx);
-    // Belt-and-braces second-call assertion: if first sweep removed files,
-    // a second pass MUST report removed:[] or upgrade() throws.
-    const block = upgradeSrc.slice(sweepIdx, sweepIdx + 1500);
-    expect(block).toMatch(/sweep drift|sweep check failed/i);
-    expect(block).toMatch(/throw new Error/);
-  });
 
   it("plugin manifest keeps ${CLAUDE_PLUGIN_ROOT} for marketplace compatibility", () => {
     // Marketplace installs read .claude-plugin/plugin.json, not repo-root
@@ -990,15 +895,6 @@ describe("Cross-OS compatibility", () => {
     // Direct 'bash' invocation fails on Windows without Git Bash
     expect(pkg.scripts["install:openclaw"]).not.toMatch(/^bash /);
   });
-
-  it("cli.ts chmodSync in setup/upgrade is guarded by platform check", () => {
-    // chmodSync must only run on non-Windows
-    const chmodIdx = src.indexOf('chmodSync(binPath');
-    expect(chmodIdx).toBeGreaterThan(-1);
-    // Must have a platform guard before the chmodSync call
-    const contextBefore = src.slice(Math.max(0, chmodIdx - 500), chmodIdx);
-    expect(contextBefore).toMatch(/process\.platform\s*!==\s*["']win32["']/);
-  });
 });
 
 // ── Bin entry: cli.bundle.mjs ─────────────────────────────────────────
@@ -1016,7 +912,7 @@ describe("Bin entry uses cli.bundle.mjs", () => {
 
   it("server.ts ctx_doctor runs diagnostics in-process (no CLI dependency)", () => {
     const src = readFileSync(resolve(ROOT, "src", "server.ts"), "utf-8");
-    const doctorSection = src.slice(src.indexOf("ctx_doctor"), src.indexOf("ctx_upgrade"));
+    const doctorSection = src.slice(src.indexOf("ctx_doctor"), src.indexOf("ctx_purge"));
     // Must NOT delegate to CLI — runs server-side
     expect(doctorSection).not.toContain('node "');
     // Must run actual checks
@@ -1073,38 +969,6 @@ describe("Bin entry uses cli.bundle.mjs", () => {
     expect(loop).toContain(": WARN");
   });
 
-  it("cli doctor treats standalone adapters as not version-comparable", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    const versionStart = src.indexOf("Checking versions");
-    const versionBlock = src.slice(versionStart, versionStart + 1800);
-
-    expect(versionBlock).toContain('installedVersion === "standalone"');
-    expect(versionBlock).toContain("standalone MCP mode");
-    expect(versionBlock).toContain("no platform plugin version to compare");
-    expect(versionBlock.indexOf('installedVersion === "standalone"'))
-      .toBeLessThan(versionBlock.indexOf('installedVersion === "not installed"'));
-  });
-
-  it("upgrade still reaches hook configuration when already on latest", () => {
-    const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
-    const alreadyLatestIdx = src.indexOf("Already on latest");
-    const configureIdx = src.indexOf("Configuring ${adapter.name} hooks");
-
-    expect(alreadyLatestIdx).toBeGreaterThan(-1);
-    expect(configureIdx).toBeGreaterThan(alreadyLatestIdx);
-
-    const alreadyLatestBlock = src.slice(alreadyLatestIdx, configureIdx);
-    expect(alreadyLatestBlock).not.toContain("return;");
-  });
-
-  it("server.ts ctx_upgrade uses cli.bundle.mjs with fallback", () => {
-    const src = readFileSync(resolve(ROOT, "src", "server.ts"), "utf-8");
-    // ctx_upgrade handler must prefer cli.bundle.mjs
-    const upgradeStart = src.indexOf('server.registerTool(\n  "ctx_upgrade"');
-    const upgradeEnd = src.indexOf("// ── ctx-purge", upgradeStart);
-    const upgradeSection = src.slice(upgradeStart, upgradeEnd);
-    expect(upgradeSection).toContain("cli.bundle.mjs");
-  });
 
   it("server.ts registers empty prompts/resources handlers to avoid -32601 (#168)", () => {
     const src = readFileSync(resolve(ROOT, "src", "server.ts"), "utf-8");
@@ -1117,18 +981,13 @@ describe("Bin entry uses cli.bundle.mjs", () => {
     expect(src).toContain("resources: []");
   });
 
-  it("openclaw-plugin.ts doctor/upgrade use cli.bundle.mjs with fallback", () => {
+  it("openclaw-plugin.ts doctor uses cli.bundle.mjs with fallback", () => {
     const src = readFileSync(resolve(ROOT, "src", "adapters", "openclaw", "plugin.ts"), "utf-8");
     expect(src).toContain("cli.bundle.mjs");
-    // Find the registerCommand blocks, not comments
     const doctorIdx = src.indexOf('name: "ctx-doctor"');
-    const upgradeIdx = src.indexOf('name: "ctx-upgrade"');
     expect(doctorIdx).toBeGreaterThan(-1);
-    expect(upgradeIdx).toBeGreaterThan(-1);
     const doctorSection = src.slice(doctorIdx, doctorIdx + 500);
-    const upgradeSection = src.slice(upgradeIdx, upgradeIdx + 500);
     expect(doctorSection).toContain("cli.bundle.mjs");
-    expect(upgradeSection).toContain("cli.bundle.mjs");
   });
 });
 
@@ -2722,266 +2581,6 @@ describe("server emits periodic stats heartbeat (statusline liveness fix)", () =
 
 // ── Issue #418: ctx-upgrade must refresh the marketplace clone ──────
 
-describe("ctx-upgrade syncs marketplace clone (#418)", () => {
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-  const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-  const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-  test("upgrade() targets ~/.claude/plugins/marketplaces/context-mode for git refresh", () => {
-    // CC's marketplace clone (separate from cache dir) was previously left
-    // pinned at the install-time commit; users running /ctx-upgrade never
-    // received upstream changes through the marketplace metadata path.
-    expect(upgradeBody).toMatch(/marketplaces[\\/]+["']?\s*,\s*["']?context-mode["']?|"marketplaces"\s*,\s*"context-mode"/);
-  });
-
-  test("upgrade() runs git fetch + reset against marketplace dir", () => {
-    // Required: actual git invocation against the marketplace path.
-    // Look for fetch and reset --hard in the upgrade body.
-    expect(upgradeBody).toMatch(/execFileSync\(\s*["']git["']\s*,\s*\[\s*["']-C["']/);
-    expect(upgradeBody).toMatch(/["']fetch["']/);
-    expect(upgradeBody).toMatch(/["']reset["'].*?["']--hard["']/s);
-  });
-
-  test("upgrade() guards on .git existence so tarball installs do not fail", () => {
-    // Defensive guard — non-git install paths must not error out.
-    expect(upgradeBody).toMatch(/existsSync\([^)]*marketplaceDir[^)]*\.git/);
-  });
-
-  test("upgrade() preserves user dev edits via git status --porcelain check", () => {
-    // Mert-class users symlink the marketplace clone to a dev worktree.
-    // Destructive `reset --hard` would wipe in-progress work — must skip
-    // when uncommitted changes exist.
-    expect(upgradeBody).toMatch(/["']status["'].*?["']--porcelain["']/s);
-  });
-});
-
-describe("ctx-upgrade swap loop supply-chain containment", () => {
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-  const SERVER_SOURCE = readFileSync(resolve(ROOT, "src/server.ts"), "utf-8");
-
-  // Both /ctx-upgrade swap loops iterate `pkg.files[]` read from a freshly
-  // cloned upstream package.json. Without containment, a compromised
-  // upstream tag shipping files: ["../../.ssh/authorized_keys"] (or, at
-  // the cli.ts site, an absolute path) would let rmSync+cpSync escape
-  // pluginRoot. Mirrors the lexical guard pattern that
-  // hooks/heal-partial-install.mjs already uses (PR #699).
-
-  test("cli.ts upgrade() rejects swap-loop items that escape pluginRoot or srcDir", () => {
-    // The block of interest is bounded by the comment about reading
-    // files from the cloned package.json and the next Issue #609 marker.
-    const loopBlock = CLI_SOURCE.match(
-      /Read files list from cloned repo's package\.json[\s\S]*?Issue #609/,
-    );
-    expect(loopBlock).not.toBeNull();
-    expect(loopBlock![0]).toContain("resolve(pluginRoot) + sep");
-    expect(loopBlock![0]).toContain("resolve(srcDir) + sep");
-    expect(loopBlock![0]).toMatch(/\(to \+ sep\)\.startsWith\(pluginRootWithSep\)/);
-    expect(loopBlock![0]).toMatch(/\(from \+ sep\)\.startsWith\(srcDirWithSep\)/);
-    // The pre-fix unguarded form must not return.
-    expect(loopBlock![0]).not.toMatch(
-      /rmSync\(resolve\(pluginRoot, item\),[^)]*\);\s*\n\s*cpSync\(resolve\(srcDir, item\)/,
-    );
-    // sep must be imported from node:path.
-    expect(CLI_SOURCE).toMatch(
-      /import\s*\{[^}]*\bsep\b[^}]*\}\s*from\s*"node:path"/,
-    );
-    // F30 hardening: symlinks inside source items must be filtered, not
-    // copied as destination symlinks. A planted symlink would otherwise
-    // bypass the lexical containment at copy time.
-    expect(loopBlock![0]).toContain("refuseSymlinks");
-    expect(loopBlock![0]).toMatch(/lstatSync\(src\)\.isSymbolicLink\(\)/);
-    expect(loopBlock![0]).toMatch(/cpSync\(from, to, \{ recursive: true, filter: refuseSymlinks \}\)/);
-    // lstatSync must be imported from node:fs.
-    expect(CLI_SOURCE).toMatch(
-      /import\s*\{[^}]*\blstatSync\b[^}]*\}\s*from\s*"node:fs"/,
-    );
-  });
-
-  test("server.ts inline-fallback upgrade script rejects swap-loop items that escape pluginRoot or srcDir", () => {
-    // The inline-script lines are literal-string template segments inside
-    // the ctx_upgrade handler's scriptLines array, so the guards land as
-    // quoted lines in src/server.ts.
-    expect(SERVER_SOURCE).toContain('import{join,resolve,sep}from"node:path"');
-    expect(SERVER_SOURCE).toContain("const PW=resolve(P)+sep;const TW=resolve(T)+sep;");
-    expect(SERVER_SOURCE).toContain("if(!(to+sep).startsWith(PW))continue;");
-    expect(SERVER_SOURCE).toContain("if(!(from+sep).startsWith(TW))continue;");
-    // The pre-fix unguarded join-only form must not return.
-    expect(SERVER_SOURCE).not.toMatch(
-      /for\(const item of items\)\{const from=join\(T,item\);const to=join\(P,item\);if\(existsSync\(from\)\)/,
-    );
-    // F30 hardening for the inline script.
-    expect(SERVER_SOURCE).toMatch(
-      /import\{[^}]*\blstatSync\b[^}]*\}from"node:fs"/,
-    );
-    expect(SERVER_SOURCE).toContain('const noSymlink=(src)=>{try{return !lstatSync(src).isSymbolicLink()}catch{return false}};');
-    expect(SERVER_SOURCE).toContain("if(!noSymlink(from))continue;");
-    expect(SERVER_SOURCE).toContain("filter:noSymlink");
-  });
-
-  test("algorithm: lexical containment guard rejects relative and absolute traversal items", async () => {
-    // Sandbox replay of the guard logic. Two trees: pluginRoot/ and
-    // srcDir/. Plant a victim file at base/OUTSIDE/victim.txt and an
-    // absolute-path probe at base/etc/passwd. Run the same guard the
-    // production swap loop uses; assert the malicious items are skipped
-    // and the legitimate item is the only one accepted.
-    const base = mkdtempSync(join(tmpdir(), "swap-loop-containment-"));
-    try {
-      const pluginRoot = join(base, "plugin", "root");
-      const srcDir = join(base, "src", "dir");
-      const outside = join(base, "OUTSIDE");
-      const etc = join(base, "etc");
-      mkdirSync(pluginRoot, { recursive: true });
-      mkdirSync(srcDir, { recursive: true });
-      mkdirSync(outside, { recursive: true });
-      mkdirSync(etc, { recursive: true });
-      writeFileSync(join(outside, "victim.txt"), "ATTACKER_WOULD_DELETE_ME");
-      writeFileSync(join(etc, "passwd"), "PRETEND_PASSWD");
-      mkdirSync(join(srcDir, "src"), { recursive: true });
-      writeFileSync(join(srcDir, "src", "index.ts"), "ok");
-
-      const { sep } = await import("node:path");
-      const pluginRootWithSep = resolve(pluginRoot) + sep;
-      const srcDirWithSep = resolve(srcDir) + sep;
-      const items = [
-        "../../OUTSIDE/victim.txt", // relative traversal
-        join(etc, "passwd"),         // absolute-path bypass
-        "src",                       // legitimate
-      ];
-      const accepted: string[] = [];
-      for (const item of items) {
-        const from = resolve(srcDir, item);
-        const to = resolve(pluginRoot, item);
-        if (!(to + sep).startsWith(pluginRootWithSep)) continue;
-        if (!(from + sep).startsWith(srcDirWithSep)) continue;
-        accepted.push(item);
-      }
-      expect(accepted).toEqual(["src"]);
-      // Victim files must remain untouched.
-      expect(existsSync(join(outside, "victim.txt"))).toBe(true);
-      expect(existsSync(join(etc, "passwd"))).toBe(true);
-    } finally {
-      rmSync(base, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("Shell-free upgrade (#185)", () => {
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-  const SERVER_SOURCE = readFileSync(resolve(ROOT, "src/server.ts"), "utf-8");
-
-  test("cli.ts upgrade function uses execFileSync, not execSync", () => {
-    // Extract upgrade function body (from "async function upgrade" to end of file)
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(-1);
-    const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-    // Must not contain execSync( calls (but execFileSync is fine)
-    const execSyncCalls = upgradeBody.match(/(?<!File)execSync\s*\(/g);
-    expect(execSyncCalls).toBeNull();
-  });
-
-  test("cli.ts uses chmodSync instead of execSync chmod", () => {
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-    // Must not shell out for chmod
-    expect(upgradeBody).not.toContain('chmod +x');
-    // Must use fs.chmodSync instead
-    expect(upgradeBody).toContain("chmodSync");
-  });
-
-  test("cli.ts upgrade aborts when hook configuration fails instead of reporting success", () => {
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(-1);
-    const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-    expect(upgradeBody).toContain("Hook configuration failed");
-    expect(upgradeBody).toMatch(/try\s*\{\s*const hookChanges = adapter\.configureAllHooks\(pluginRoot\)/s);
-    expect(upgradeBody).toMatch(/\}\s*catch\s*\(err: unknown\)\s*\{[\s\S]*throw new Error\(`Hook configuration failed: \$\{message\}`\);/s);
-  });
-
-  test("cli.ts entrypoint catches upgrade() rejection and exits non-zero", () => {
-    const entryStart = CLI_SOURCE.indexOf("const args = process.argv.slice(2);");
-    expect(entryStart).toBeGreaterThan(-1);
-    const entryBody = CLI_SOURCE.slice(entryStart, CLI_SOURCE.indexOf("/* -------------------------------------------------------", entryStart + 20));
-
-    expect(entryBody).toContain('} else if (args[0] === "upgrade") {');
-    // Issue #542 — entrypoint now forwards optional --platform <id> from
-    // the ctx_upgrade MCP handler. Match either invocation shape:
-    //   upgrade().catch(...)                      (legacy)
-    //   upgrade(... ? { platform: ... } : ...).catch(...)  (issue #542)
-    expect(entryBody).toMatch(/upgrade\([^)]*\)\.catch\(\(err: unknown\) => \{/);
-    expect(entryBody).toContain("process.exit(1);");
-  });
-
-  test("cli.ts already-latest path still configures hooks", () => {
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(-1);
-    const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-    const alreadyLatestIdx = upgradeBody.indexOf('p.log.success(color.green("Already on latest")');
-    expect(alreadyLatestIdx).toBeGreaterThan(-1);
-    const configureIdx = upgradeBody.indexOf("adapter.configureAllHooks(pluginRoot)");
-    expect(configureIdx).toBeGreaterThan(-1);
-    expect(configureIdx).toBeGreaterThan(alreadyLatestIdx);
-  });
-
-  test("cli.ts swap loop guards rm/cp with existsSync(from)", () => {
-    // Regression test for the partial-install vector: the rm/cp loop's
-    // catch-all was swallowing cpSync failures, so a `files[]` entry
-    // that didn't exist in the cloned source dropped the corresponding
-    // pluginRoot path without replacement. Mirrors the safe pattern in
-    // server.ts:3820 inline-fallback (`if (existsSync(from))` before any
-    // rm or cp). Same architectural-lock as the rest of #609.
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(-1);
-    const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-    const loopIdx = upgradeBody.indexOf("for (const item of items) {");
-    expect(loopIdx, "swap loop missing in upgrade()").toBeGreaterThan(-1);
-    const loopBody = upgradeBody.slice(loopIdx, loopIdx + 1200);
-    // Source must exist before any rm/cp fires.
-    expect(loopBody).toMatch(/if\s*\(!existsSync\(from\)\)\s*continue/);
-    // The existsSync probe must come BEFORE rmSync inside the loop, not
-    // after; otherwise it's a no-op guard against the actual vector.
-    const guardIdx = loopBody.indexOf("if (!existsSync(from)) continue");
-    const rmIdx = loopBody.indexOf("rmSync");
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(rmIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeLessThan(rmIdx);
-  });
-
-  test("server.ts inline fallback uses execFileSync, not execSync", () => {
-    // The inline script template must use execFileSync
-    const inlineStart = SERVER_SOURCE.indexOf("Inline fallback");
-    expect(inlineStart).toBeGreaterThan(-1);
-    const inlineSection = SERVER_SOURCE.slice(inlineStart, SERVER_SOURCE.indexOf("cmd =", inlineStart + 500));
-
-    // Generated script lines must import execFileSync
-    expect(inlineSection).toContain("execFileSync");
-    expect(inlineSection).not.toMatch(/(?<!File)execSync/);
-  });
-
-  test("server.ts inline fallback copies package files including bin", () => {
-    const inlineStart = SERVER_SOURCE.indexOf("Inline fallback");
-    expect(inlineStart).toBeGreaterThan(-1);
-    const inlineSection = SERVER_SOURCE.slice(inlineStart, SERVER_SOURCE.indexOf("cmd =", inlineStart + 500));
-
-    expect(inlineSection).toContain('readFileSync(join(T,"package.json"),"utf8")');
-    expect(inlineSection).toContain("pkg.files");
-    expect(inlineSection).toContain("Array.isArray(pkg.files)");
-    expect(inlineSection).toContain("for(const item of items)");
-    // Issue #609: server.ts inline-fallback MUST NOT write `.mcp.json` either.
-    // Same architectural-lock as cli.ts upgrade(). The inline-fallback was the
-    // OTHER producer of per-version `.mcp.json` files — both writers had to go
-    // for the carry-forward bug class to be structurally impossible.
-    expect(inlineSection).not.toContain('writeFileSync(join(P,".mcp.json")');
-    expect(inlineSection).not.toContain("copyDirs");
-    expect(inlineSection).not.toContain("copyFiles");
-  });
-});
-
-// ── Issue #186: temp dirs must be dot-prefixed to hide from VS Code ──
-
 describe("Hidden temp dirs (#186)", () => {
   test("executor.ts uses dot-prefixed temp dir to avoid VS Code auto-open", () => {
     const EXEC_SOURCE = readFileSync(resolve(ROOT, "src/executor.ts"), "utf-8");
@@ -3281,318 +2880,6 @@ describe("Cursor CLI hook dispatch — stop event", () => {
 
 // ── Upgrade skill sync to marketplace/cache directories ───────────────────
 
-describe("Upgrade syncs skills to active install path (#228)", () => {
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-  const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-  // Bound the slice to the upgrade() function only — without this the slice
-  // includes downstream helpers (statuslineForward, etc.) and assertions like
-  // "no marketplace ref" fire on UNRELATED code added later in the file.
-  const upgradeEnd = CLI_SOURCE.indexOf("\n/* ---", upgradeStart);
-  const upgradeBody = CLI_SOURCE.slice(upgradeStart, upgradeEnd > 0 ? upgradeEnd : undefined);
-
-  test("upgrade reads installed_plugins.json to find active install path", () => {
-    expect(upgradeBody).toContain("installed_plugins.json");
-    expect(upgradeBody).toContain("context-mode@context-mode");
-    expect(upgradeBody).toContain("installPath");
-  });
-
-  test("upgrade only syncs when installPath differs from pluginRoot", () => {
-    // Must short-circuit when installPath === pluginRoot before copying.
-    // Accept either the original `installPath !== pluginRoot` conjunction
-    // form OR the refactored early-continue form (`if (installPath ===
-    // pluginRoot) continue;`).
-    expect(upgradeBody).toMatch(
-      /installPath.*!==.*pluginRoot|installPath\s*===\s*pluginRoot/,
-    );
-  });
-
-  test("upgrade does NOT blindly copy to marketplace or cache directories", () => {
-    // No hardcoded marketplace/cache paths — only installPath from registry
-    const syncSection = upgradeBody.slice(upgradeBody.indexOf("installed_plugins.json"));
-    expect(syncSection).not.toContain('"marketplaces"');
-    expect(syncSection).not.toContain("readdirSync");
-  });
-
-  test("upgrade warns user to restart for new MCP tools", () => {
-    expect(upgradeBody).toMatch(/[Rr]estart.*MCP|new MCP tools/i);
-  });
-
-  test("restart hint is adapter-aware (Claude Code gets /reload-plugins)", () => {
-    expect(upgradeBody).toContain("reload-plugins");
-    expect(upgradeBody).toContain('adapter.name === "Claude Code"');
-  });
-});
-
-describe("installed_plugins.json installPath containment", () => {
-  // installed_plugins.json is written by Claude Code itself with installPath
-  // values under <claudeRoot>/plugins/cache/<marketplace>/<plugin>/<version>.
-  // Any installPath that resolves elsewhere has been tampered with by a co-
-  // resident plugin, a malicious postinstall, or another local actor. cli.ts
-  // consumes the field in two hot places: the upgrade() skills sync (cpSync
-  // into installPath) and statuslineForward() (dynamic import from
-  // installPath/bin/statusline.mjs, ~3-5 Hz while CC is open). Both sites
-  // need the same lexical guard that server.ts:790 already uses on the
-  // same field.
-
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-
-  test("upgrade() skills cpSync gates installPath under <claudeRoot>/plugins/cache", () => {
-    // Bound the slice to the upgrade() skills-sync block.
-    const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-    expect(upgradeStart).toBeGreaterThan(0);
-    const skillsBlock = CLI_SOURCE
-      .slice(upgradeStart)
-      .match(/Sync skills to the active install path[\s\S]*?best effort — registry may not exist or be malformed/);
-    expect(skillsBlock).not.toBeNull();
-    expect(skillsBlock![0]).toContain('resolve(claudeRoot, "plugins", "cache")');
-    expect(skillsBlock![0]).toMatch(/\(resolvedInstallPath \+ sep\)\.startsWith\(cacheRootWithSep\)/);
-    // The pre-fix shape passed installPath verbatim to cpSync without
-    // normalizing or gating it.
-    expect(skillsBlock![0]).not.toMatch(
-      /cpSync\(srcSkills, resolve\(installPath, "skills"\),/,
-    );
-    // F30 hardening: realpathSync re-check defeats symlink-anchor bypasses
-    // where the cacheRoot-anchored installPath is itself a symlink to an
-    // attacker target.
-    expect(skillsBlock![0]).toMatch(/realpathSync\(cacheRoot\)/);
-    expect(skillsBlock![0]).toMatch(/realpathSync\(resolvedInstallPath\)/);
-    expect(skillsBlock![0]).toMatch(/\(realInstallPath \+ sep\)\.startsWith\(cacheRootWithSep\)/);
-    expect(skillsBlock![0]).toMatch(/cpSync\(srcSkills, resolve\(realInstallPath, "skills"\)/);
-  });
-
-  test("statuslineForward() candidate selection gates installPath under <claudeRoot>/plugins/cache", () => {
-    // Slice to the statuslineForward() function body.
-    const statuslineStart = CLI_SOURCE.indexOf("statuslineForward");
-    expect(statuslineStart).toBeGreaterThan(0);
-    const tail = CLI_SOURCE.slice(statuslineStart);
-    // The candidate-building block runs between the candidates[] declaration
-    // and the candidates.find() that picks the script to import.
-    const candidateBlock = tail.match(
-      /candidates: string\[\] = \[[\s\S]*?candidates\.find\(/,
-    );
-    expect(candidateBlock).not.toBeNull();
-    expect(candidateBlock![0]).toContain('resolve(claudeRoot, "plugins", "cache")');
-    expect(candidateBlock![0]).toMatch(/\(resolvedInstallPath \+ sep\)\.startsWith\(cacheRootWithSep\)/);
-    // The pre-fix shape pushed any installPath string into candidates without
-    // gating it.
-    expect(candidateBlock![0]).not.toMatch(
-      /candidates\.push\(resolve\(installPath, "bin", "statusline\.mjs"\)\)/,
-    );
-    // F30 hardening: realpathSync re-check on the candidate's installPath.
-    expect(candidateBlock![0]).toMatch(/realpathSync\(cacheRoot\)/);
-    expect(candidateBlock![0]).toMatch(/realpathSync\(resolvedInstallPath\)/);
-    expect(candidateBlock![0]).toMatch(/\(realInstallPath \+ sep\)\.startsWith\(cacheRootWithSep\)/);
-    expect(candidateBlock![0]).toMatch(/candidates\.push\(resolve\(realInstallPath, "bin", "statusline\.mjs"\)\)/);
-    // realpathSync must be imported from node:fs.
-    expect(CLI_SOURCE).toMatch(
-      /import\s*\{[^}]*\brealpathSync\b[^}]*\}\s*from\s*"node:fs"/,
-    );
-  });
-
-  test("algorithm: realpath re-check rejects symlink-anchor planted at cacheRoot/<owner>/<plugin>/<version>", async () => {
-    // Sandbox: build <fakeClaudeRoot>/plugins/cache/owner/plugin/version
-    // as a SYMLINK targeting an attacker-controlled directory outside
-    // cacheRoot. The lexical resolve+startsWith check passes (the symlink
-    // path itself is under cacheRoot). realpathSync follows the link and
-    // returns the attacker target -- which then fails the post-realpath
-    // startsWith gate.
-    const fs = await import("node:fs");
-    // Canonicalize the base directory up front: on macOS, mkdtempSync(tmpdir())
-    // returns a path under /var/folders, which is itself a symlink to
-    // /private/var/folders. Without realpathSync here, the legit-installPath
-    // arm below trips the lexical startsWith gate (resolved input still
-    // /var/folders/..., cacheRootCanon is /private/var/folders/...). Same
-    // canonicalization production users get when ~/.claude lives on a real
-    // (non-symlinked) path.
-    const base = fs.realpathSync(
-      mkdtempSync(join(tmpdir(), "installpath-symlink-anchor-")),
-    );
-    try {
-      const cacheRoot = resolve(base, ".claude", "plugins", "cache");
-      const legitVersionDir = resolve(cacheRoot, "owner", "plugin", "1.0.0");
-      const attackerDir = resolve(base, "attacker-target");
-      mkdirSync(legitVersionDir, { recursive: true });
-      mkdirSync(attackerDir, { recursive: true });
-      writeFileSync(join(attackerDir, "marker.txt"), "PWNED");
-
-      // Planted symlink anchor: <cacheRoot>/owner/plugin/2.0.0 -> attackerDir.
-      // On Windows without symlink privilege / Developer Mode, symlinkSync
-      // with type "dir" fails with EPERM; "junction" works without privilege
-      // and still reports isSymbolicLink()===true under lstatSync.
-      const plantedAnchor = resolve(cacheRoot, "owner", "plugin", "2.0.0");
-      const symlinkType = process.platform === "win32" ? "junction" : "dir";
-      fs.symlinkSync(attackerDir, plantedAnchor, symlinkType);
-
-      const cacheRootCanon = fs.realpathSync(cacheRoot);
-      const cacheRootWithSep = cacheRootCanon + require("node:path").sep;
-
-      const isAccepted = (installPath: string): boolean => {
-        const resolvedInstallPath = resolve(installPath);
-        if (!(resolvedInstallPath + require("node:path").sep).startsWith(cacheRootWithSep)) return false;
-        let realInstallPath: string;
-        try { realInstallPath = fs.realpathSync(resolvedInstallPath); }
-        catch { return false; }
-        return (realInstallPath + require("node:path").sep).startsWith(cacheRootWithSep);
-      };
-
-      // Legit version dir: accepted.
-      expect(isAccepted(legitVersionDir)).toBe(true);
-      // Symlink anchor: lexical passes, realpath escapes -> rejected.
-      expect(isAccepted(plantedAnchor)).toBe(false);
-      // Direct attacker path: lexical rejects immediately.
-      expect(isAccepted(attackerDir)).toBe(false);
-    } finally {
-      rmSync(base, { recursive: true, force: true });
-    }
-  });
-
-  test("algorithm: containment rejects installPath values outside the cache root", async () => {
-    // Sandbox a fake <claudeRoot> tree with a cache dir holding one
-    // legitimate plugin entry, plus a malicious entry pointing at an
-    // attacker-chosen directory outside the cache. Replay the production
-    // guard; assert only the legitimate entry survives.
-    const claudeRoot = mkdtempSync(join(tmpdir(), "installpath-containment-"));
-    try {
-      const cacheRoot = resolve(claudeRoot, "plugins", "cache");
-      const legitCacheDir = resolve(cacheRoot, "context-mode", "context-mode", "1.0.0");
-      const attackerDir = resolve(claudeRoot, "outside-cache", "evil");
-      mkdirSync(legitCacheDir, { recursive: true });
-      mkdirSync(attackerDir, { recursive: true });
-
-      const { sep } = await import("node:path");
-      const cacheRootWithSep = cacheRoot + sep;
-      const inputs = [
-        { installPath: legitCacheDir, label: "legit" },
-        { installPath: attackerDir, label: "outside-cache" },
-        { installPath: "/etc", label: "absolute-system" },
-        // Relative-".." escape: legitimate prefix then ".." up and out.
-        { installPath: join(legitCacheDir, "..", "..", "..", "..", "outside-cache", "evil"), label: "traversal" },
-      ];
-      const accepted: string[] = [];
-      for (const { installPath, label } of inputs) {
-        if (typeof installPath !== "string" || !installPath) continue;
-        const resolvedInstallPath = resolve(installPath);
-        if (!(resolvedInstallPath + sep).startsWith(cacheRootWithSep)) continue;
-        accepted.push(label);
-      }
-      expect(accepted).toEqual(["legit"]);
-    } finally {
-      rmSync(claudeRoot, { recursive: true, force: true });
-    }
-  });
-
-  // Issue #795: when ~/.claude is a symlink to another volume, the
-  // healCacheMidSession traversal guard in server.ts compares a lexical
-  // cacheRoot (symlink path, e.g. /Users/me/.claude/plugins/cache) against
-  // a physical installPath from the plugin registry (e.g.
-  // /Volumes/SSD/claude-code/plugins/cache/...). Without canonicalizing
-  // cacheRoot via realpathSync, the startsWith check fails and the heal
-  // is skipped for every user with a symlinked ~/.claude.
-  //
-  // RED→GREEN: the source-level assertion (realpathSync on cacheRoot inside
-  // healCacheMidSession) FAILS when the fix is reverted. The algorithmic
-  // assertions prove the lexical comparison rejects and the canonical
-  // comparison accepts the symlinked-layout entry.
-
-  const SERVER_SOURCE = readFileSync(resolve(ROOT, "src/server.ts"), "utf-8");
-
-  test("server.ts: healCacheMidSession canonicalizes cacheRoot with realpathSync (#795)", () => {
-    // Locate the healCacheMidSession function body.
-    const healStart = SERVER_SOURCE.indexOf("function healCacheMidSession");
-    expect(healStart).toBeGreaterThan(0);
-    const healBody = SERVER_SOURCE.slice(healStart);
-    // Bound to the end of the function (the next top-level "function").
-    const nextFn = healBody.indexOf("\nfunction ");
-    const fnSlice = nextFn > 0 ? healBody.slice(0, nextFn) : healBody;
-
-    // The fix canonicalizes cacheRoot via realpathSync with a try/catch
-    // fallback, matching the pattern already used in cli.ts.
-    expect(fnSlice).toMatch(/realpathSync\(cacheRoot\)/);
-    // The traversal guard must use the canonical cacheRootCanon, not the
-    // lexical cacheRoot directly.
-    expect(fnSlice).toMatch(/cacheRootCanon\s*\+\s*sep/);
-    // Pre-fix shape: startsWith(cacheRoot + sep) without canonicalization.
-    // This pattern MUST NOT appear in the traversal guard for installPath.
-    // (It may still appear in comments or string literals, so we scope the
-    // negative assertion to the line that checks installPath containment.)
-    expect(fnSlice).toMatch(/resolve\(rp\)\.startsWith\(cacheRootCanon/);
-  });
-
-  test("algorithm: canonical cacheRoot accepts physical installPath when ~/.claude is a symlink (#795)", async () => {
-    // Skip on Windows: symlink-permission requirements vary and the
-    // scenario the issue targets (symlink-rehomed ~/.claude to another
-    // volume) is a macOS/macOS-on-Linux-Desktop pattern.
-    if (process.platform === "win32") return;
-
-    const fs = await import("node:fs");
-
-    // Build two directories: the "real" target (simulates the external volume)
-    // and the symlink path (simulates ~/.claude → external).
-    const sandbox = mkdtempSync(join(tmpdir(), "ctx-795-cache-root-symlink-"));
-    try {
-      const realTarget = join(sandbox, "real-claude-root");
-      const symlinkPath = join(sandbox, "dot-claude");
-      mkdirSync(realTarget, { recursive: true });
-
-      // Create the cache tree inside the real target.
-      const realCacheRoot = resolve(realTarget, "plugins", "cache");
-      const versionDir = resolve(realCacheRoot, "context-mode", "context-mode", "1.0.161");
-      mkdirSync(versionDir, { recursive: true });
-
-      // Simulate ~/.claude → realTarget
-      fs.symlinkSync(realTarget, symlinkPath, process.platform === "win32" ? "junction" : "dir");
-
-      // The cacheRoot as computed by resolveClaudeConfigDir():
-      // path.resolve does NOT dereference symlinks, so cacheRoot uses the
-      // symlink path (NOT the real path).
-      const lexicalCacheRoot = resolve(symlinkPath, "plugins", "cache");
-      // The canonical cacheRoot (what the fix produces via realpathSync).
-      const canonicalCacheRoot = fs.realpathSync(lexicalCacheRoot);
-      const canonicalCacheRootWithSep = canonicalCacheRoot + sep;
-
-      // installPath as stored by the plugin registry: the physical path
-      // under the real target (not the symlink path).
-      const physicalInstallPath = resolve(realTarget, "plugins", "cache", "context-mode", "context-mode", "1.0.161");
-
-      // Verification 1 — OLD behaviour (lexical, no fix):
-      // The lexical comparison fails because the physical installPath
-      // (/.../real-claude-root/...) does not start with the symlink-path
-      // cacheRoot (/.../dot-claude/...).
-      const lexicalPasses = resolve(physicalInstallPath).startsWith(lexicalCacheRoot + sep);
-      expect(lexicalPasses).toBe(false); // RED: would skip the heal
-
-      // Verification 2 — FIXED behaviour (canonical cacheRoot):
-      // After canonicalizing cacheRoot via realpathSync, the physical
-      // installPath does start with the canonical prefix.
-      // realpathSync is used on both sides because on macOS /var is itself a
-      // symlink to /private/var — resolve() alone stays on the non-canonical
-      // side and fails the startsWith check.
-      const canonicalPasses = fs.realpathSync(resolve(physicalInstallPath)).startsWith(canonicalCacheRootWithSep);
-      expect(canonicalPasses).toBe(true); // GREEN: heal proceeds
-    } finally {
-      rmSync(sandbox, { recursive: true, force: true });
-    }
-  });
-});
-
-// ── better-sqlite3 binding self-heal (#408) ───────────────────────────────
-//
-// On Windows, `npm rebuild better-sqlite3` falls through to node-gyp when
-// prebuild-install is not on cmd.exe PATH, then dies for users without
-// MSVC. The fix is a 3-layer heal (spawn prebuild-install via
-// process.execPath → `npm install better-sqlite3` → actionable stderr)
-// shared between scripts/postinstall.mjs and hooks/ensure-deps.mjs via
-// scripts/heal-better-sqlite3.mjs.
-//
-// Tests in this block cover:
-//   - doctor() in src/cli.ts: clearer hint when FTS5 check fails on a
-//     bindings-missing pattern.
-//   - scripts/postinstall.mjs: calls the shared heal helper after the
-//     existing nvm4w junction logic; mklink /J regression guard.
-//   - scripts/heal-better-sqlite3.mjs: single source of truth — pins the
-//     prebuild-install + npm install + Windows/#408 stderr surface so the
-//     dedupe doesn't silently regress.
-
 describe("better-sqlite3 binding self-heal (#408)", () => {
   const CLI_SRC = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
   const POSTINSTALL_SRC = readFileSync(resolve(ROOT, "scripts", "postinstall.mjs"), "utf-8");
@@ -3604,7 +2891,7 @@ describe("better-sqlite3 binding self-heal (#408)", () => {
     expect(ftsAnchor).toBeGreaterThan(-1);
     const catchIdx = CLI_SRC.indexOf("catch (err", ftsAnchor);
     expect(catchIdx).toBeGreaterThan(-1);
-    const versionIdx = CLI_SRC.indexOf("Checking versions", catchIdx);
+    const versionIdx = CLI_SRC.indexOf("  // Summary", catchIdx);
     expect(versionIdx).toBeGreaterThan(catchIdx);
     return CLI_SRC.slice(catchIdx, versionIdx);
   }
@@ -3766,8 +3053,8 @@ describe("Issue #564 — doctor() flags Linux + Node < 22.5 + no Bun", () => {
     const start = CLI_SRC.indexOf("async function doctor(");
     expect(start).toBeGreaterThan(-1);
     // doctor() spans ~300 lines; grab a generous window that ends before
-    // the next top-level function declaration (`async function insight`).
-    const end = CLI_SRC.indexOf("async function insight", start);
+    // the next top-level function declaration (`function statuslineForward`).
+    const end = CLI_SRC.indexOf("function statuslineForward", start);
     expect(end).toBeGreaterThan(start);
     return CLI_SRC.slice(start, end);
   }
@@ -3811,78 +3098,13 @@ describe("Issue #564 — doctor() flags Linux + Node < 22.5 + no Bun", () => {
 // exists. On modern Node the startup probe is skipped, so the ABI-specific
 // cache file is the no-probe compatibility marker and hooks/ensure-deps.mjs
 // owns the repair decision.
-describe("Upgrade native ABI bootstrap", () => {
-  const CLI_SOURCE = readFileSync(resolve(ROOT, "src/cli.ts"), "utf-8");
-  const upgradeStart = CLI_SOURCE.indexOf("async function upgrade");
-  const upgradeBody = CLI_SOURCE.slice(upgradeStart);
-
-  it("delegates native compatibility to hooks/ensure-deps.mjs", () => {
-    const rebuildStartIdx = upgradeBody.indexOf("Verifying native addon ABI");
-    expect(rebuildStartIdx).toBeGreaterThan(-1);
-    const region = upgradeBody.slice(
-      Math.max(0, rebuildStartIdx - 600),
-      rebuildStartIdx + 800,
-    );
-    expect(region).toContain('"hooks", "ensure-deps.mjs"');
-    expect(region).toContain("pathToFileURL");
-    expect(region).toContain("await import");
-    expect(region).not.toContain("binding present");
-  });
-
-  it("uses the current ABI cache as the native-addon success marker", () => {
-    const rebuildStartIdx = upgradeBody.indexOf("Verifying native addon ABI");
-    expect(rebuildStartIdx).toBeGreaterThan(-1);
-    const region = upgradeBody.slice(rebuildStartIdx, rebuildStartIdx + 1500);
-    expect(region).toContain("better_sqlite3.abi${process.versions.modules}.node");
-    expect(region).toContain("existsSync(bsqAbiCachePath)");
-    expect(region).toContain("ABI cache present");
-  });
-});
-
-// ── Issue #613/#609 — doctor() surfaces persistence-tier bug class ─────
-// PR #620 (Family A) shipped the architectural fixes:
-//   - #609: stop writing per-version cache `.mcp.json` + post-bump sweep
-//   - #613: vscode/jetbrains-copilot hook commands ship CLI-dispatcher form
-//           (no absolute `process.execPath` + script path baked into
-//           workspace-committed `.github/hooks/context-mode.json`)
-//
-// These two slices are the *prevention* surface — root-cause fixes that
-// stop the bug from being written. But users on the field can still be
-// holding pre-PR-620 poisoned state:
-//   - already-committed `.github/hooks/context-mode.json` in their repo
-//     with absolute Windows fnm shim paths from v1.0.136 or earlier
-//   - leftover `.mcp.json` in `~/.claude/plugins/cache/.../<version>/`
-//     from /ctx-upgrade flows that ran before PR #620
-//
-// Doctor's job per the verdict family ("silent-green doctor while hooks
-// are dead is itself a P0 trust bug" — ISSUE-604-VERDICT §11) is to
-// SURFACE that pre-PR state BEFORE the user hits a runtime failure.
-//
-// Architect contract for PR #620 + slice 4:
-//   CHECK A: doctor scans workspace Tier C files (`.github/hooks/context-mode.json`,
-//            `.cursor/hooks.json`, `.jetbrains/copilot/hooks.json` under
-//            process.cwd()) — for each that exists, parse JSON, recurse
-//            into all string values, FAIL if any matches absolute path
-//            patterns (unix `/`, Windows `[A-Z]:[/\\]`, `\\`, fnm_multishells).
-//            Remediation: "run `ctx_upgrade` to rewrite to portable form".
-//            Missing config → SKIP (no false fail).
-//
-//   CHECK B: doctor scans `~/.claude/plugins/cache/context-mode/context-mode/*/`
-//            for `.mcp.json` files (post-PR-620 these should not exist).
-//            Found → WARN (not fail) with remediation:
-//            "ctx_upgrade will sweep on next run".
-//
-// Same static-analysis assertion pattern as Issue #564 doctor test (above)
-// and lines 962, 997, 1010 — runtime spawning would need fixture
-// workspaces on three OSes and is not portable; asserting the gate
-// exists in doctor() source catches the regression at PR time.
 describe("PR #620 slice 4 — doctor() surfaces persistence-tier bug class", () => {
   const CLI_SRC = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
 
   function doctorBody(): string {
     const start = CLI_SRC.indexOf("async function doctor(");
     expect(start).toBeGreaterThan(-1);
-    const end = CLI_SRC.indexOf("async function insight", start);
+    const end = CLI_SRC.indexOf("function statuslineForward", start);
     expect(end).toBeGreaterThan(start);
     return CLI_SRC.slice(start, end);
   }

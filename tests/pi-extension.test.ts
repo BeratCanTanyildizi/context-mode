@@ -1335,7 +1335,6 @@ describe("Pi MCP bridge (#426)", () => {
           "ctx_search",
           "ctx_index",
           "ctx_batch_execute",
-          "ctx_fetch_and_index",
           "ctx_doctor",
           "ctx_stats",
           "ctx_purge",
@@ -1418,7 +1417,6 @@ describe("Pi MCP bridge (#426)", () => {
           "ctx_search",
           "ctx_index",
           "ctx_batch_execute",
-          "ctx_fetch_and_index",
         ]),
       );
 
@@ -1480,7 +1478,6 @@ describe("Pi MCP bridge (#426)", () => {
           "ctx_search",
           "ctx_index",
           "ctx_batch_execute",
-          "ctx_fetch_and_index",
         ]),
       );
 

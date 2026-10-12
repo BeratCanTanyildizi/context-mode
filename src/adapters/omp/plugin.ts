@@ -296,7 +296,7 @@ export default function ompPlugin(pi: MinimalHookAPI): void {
         return {
           block: true,
           reason:
-            "Use context-mode MCP tools (ctx_execute, ctx_fetch_and_index) instead of inline HTTP. " +
+            "Use context-mode MCP tools (ctx_execute, ctx_search) instead of inline HTTP. " +
             "curl/wget/fetch dump raw HTTP into the context window.",
         };
       }

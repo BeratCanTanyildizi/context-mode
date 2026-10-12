@@ -104,7 +104,7 @@ export function emitIndexWriteEvent(opts: {
 }
 
 /**
- * Record a `ctx_fetch_and_index` TTL cache hit — bytes the user would
+ * Record a `ctx_search` TTL cache hit — bytes the user would
  * have spent re-fetching the same URL within the 24h cache window.
  */
 export function emitCacheHitEvent(opts: {

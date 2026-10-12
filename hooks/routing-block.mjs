@@ -23,7 +23,7 @@ export function createRoutingBlock(t, options = {}) {
 ${toolSearchBootstrap ? `
   <deferred_tool_bootstrap>
     The context-mode tools below may be DEFERRED in your harness — their schemas are not loaded yet, so calling them directly fails (e.g. "tool not found" / InputValidationError). Load them ONCE before your first ctx_* call:
-    ToolSearch(query: "select:${t("ctx_batch_execute")},${t("ctx_search")},${t("ctx_execute")},${t("ctx_execute_file")},${t("ctx_fetch_and_index")}")
+    ToolSearch(query: "select:${t("ctx_batch_execute")},${t("ctx_execute")},${t("ctx_execute_file")},${t("ctx_search")}")
     After that they are callable. If any ctx_* call fails as not-found, ToolSearch it and retry — do NOT fall back to Bash/Read just because the schema was not loaded yet.
   </deferred_tool_bootstrap>
 ` : ''}
@@ -42,7 +42,7 @@ ${toolSearchBootstrap ? `
   <when_not_to_use>
     - You intend to PROCESS the output (filter, count, parse, aggregate) → use ${t("ctx_batch_execute")} or ${t("ctx_execute")}. Bash stays correct when you intend to OBSERVE a short fixed output (git status on a clean tree, whoami, pwd) or when you are mutating state (git, mkdir, rm, mv, navigation).
     - You want to analyze, summarize, or extract from a file → use ${t("ctx_execute_file")}. Read stays correct when you intend to Edit the file (Edit needs the exact bytes in your conversation to match against).
-    - WebFetch → use ${t("ctx_fetch_and_index")}; full network access, results indexed for ${t("ctx_search")}, raw page bytes never enter your conversation.
+    - WebFetch is a normal tool call. The sandbox has no network access; ask the user before fetching anything.
     - ${t("ctx_execute")} and ${t("ctx_execute_file")} for file writes → these run code in a subprocess and discard the sandbox FS; they are for analysis, processing, and computation only.
   </when_not_to_use>
 
@@ -67,9 +67,6 @@ ${includeCommands ? `
     "ctx doctor" | "ctx-doctor" | "/ctx-doctor" | diagnose context-mode
     → Call doctor MCP tool, run returned shell command, display as checklist.
 
-    "ctx upgrade" | "ctx-upgrade" | "/ctx-upgrade" | update context-mode
-    → Call upgrade MCP tool, run returned shell command, display as checklist.
-
     "ctx purge" | "ctx-purge" | "/ctx-purge" | wipe/reset knowledge base
     → Call purge MCP tool with confirm: true. Warn: irreversible.
 
@@ -92,7 +89,7 @@ export function createBashGuidance(t) {
 }
 
 export function createExternalMcpGuidance(t) {
-  return '<context_guidance>\n  <tip>\n    External MCP tools commonly return large payloads (channel history, file content, search results) that enter your conversation in full. When you intend to filter, count, or aggregate that data, pipe it through ' + t("ctx_execute") + '(language, code) — the raw payload stays in the sandbox and only the derived answer enters your conversation. For docs-style fetches you will want to query later, prefer ' + t("ctx_fetch_and_index") + '(url, source) then ' + t("ctx_search") + '(queries).\n  </tip>\n</context_guidance>';
+  return '<context_guidance>\n  <tip>\n    External MCP tools commonly return large payloads (channel history, file content, search results) that enter your conversation in full. When you intend to filter, count, or aggregate that data, pipe it through ' + t("ctx_execute") + '(language, code) — the raw payload stays in the sandbox and only the derived answer enters your conversation. The sandbox has no network access; ask the user before fetching anything.\n  </tip>\n</context_guidance>';
 }
 
 // ── Backward compat: static exports defaulting to claude-code ──

@@ -144,20 +144,6 @@ export const OPENCLAW_TOOL_DEFS: readonly OpenClawToolDef[] = [
     execute: cliRedirect("ctx_search"),
   },
   {
-    name: "ctx_fetch_and_index",
-    description: "Fetch a URL, chunk it, and index — raw HTML never enters context.",
-    parameters: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "URL to fetch" },
-        source: { type: "string", description: "Source label for indexed chunks" },
-      },
-      required: ["url"],
-      additionalProperties: true,
-    },
-    execute: cliRedirect("ctx_fetch_and_index"),
-  },
-  {
     name: "ctx_batch_execute",
     description:
       "Run multiple commands and search queries in ONE call. Primary research tool — replaces 30+ individual calls.",
@@ -192,16 +178,6 @@ export const OPENCLAW_TOOL_DEFS: readonly OpenClawToolDef[] = [
     execute: cliRedirect("ctx_doctor"),
   },
   {
-    name: "ctx_upgrade",
-    description: "Upgrade context-mode to the latest version.",
-    parameters: {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    },
-    execute: cliRedirect("ctx_upgrade"),
-  },
-  {
     name: "ctx_purge",
     description:
       "DESTRUCTIVE — permanently delete indexed content. CANNOT be undone.\n\n" +
@@ -220,16 +196,6 @@ export const OPENCLAW_TOOL_DEFS: readonly OpenClawToolDef[] = [
       additionalProperties: true,
     },
     execute: cliRedirect("ctx_purge"),
-  },
-  {
-    name: "ctx_insight",
-    description: "Open the hosted context-mode Insight dashboard (context-mode.com/insight) in the browser.",
-    parameters: {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    },
-    execute: cliRedirect("ctx_insight"),
   },
 ];
 

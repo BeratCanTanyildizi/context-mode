@@ -978,29 +978,6 @@ export default {
         },
       });
 
-      registerAutoReplyCommand({
-        name: "ctx-upgrade",
-        description: "Upgrade context-mode to the latest version",
-        handler: () => {
-          const bundlePath = resolve(_latestPluginRoot, "cli.bundle.mjs");
-          const fallbackPath = resolve(_latestPluginRoot, "build", "cli.js");
-          const cliPath = existsSync(bundlePath) ? bundlePath : fallbackPath;
-          const cmd = `${buildNodeCommand(cliPath)} upgrade`;
-          return {
-            text: [
-              "## ctx-upgrade",
-              "",
-              "Run this command to upgrade context-mode:",
-              "",
-              "```",
-              cmd,
-              "```",
-              "",
-              "Restart your session after upgrade.",
-            ].join("\n"),
-          };
-        },
-      });
     }
   },
 };

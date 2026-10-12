@@ -471,7 +471,6 @@ function bunVersionAtLeast1(versionOutput: string): boolean {
  *     Node (#543: bun cannot dlopen better-sqlite3's prebuilt .node).
  *   - `ensure-deps.mjs` — separate path, must stay on Node for the same
  *     reason.
- *   - `ctx_upgrade` — separate path, must stay on Node for the same reason.
  */
 /**
  * Liveness-guarded Node path for the hook-runtime fallback (issue #841).

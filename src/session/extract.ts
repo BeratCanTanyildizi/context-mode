@@ -26,13 +26,13 @@ export interface SessionEvent {
   /**
    * Optional — bytes context-mode prevented from entering the model context
    * window for this event. Currently populated by external_ref when a
-   * ctx_fetch_and_index tool_response carries the
+   * ctx_search tool_response carries the
    * `Fetched and indexed N sections (XKB)` preamble.
    */
   bytes_avoided?: number;
   /**
    * Optional — bytes the model PAID to ACCESS kept-out content for this event:
-   * the tool_response byte length of a `ctx_search` / `ctx_fetch_and_index`
+   * the tool_response byte length of a `ctx_search` / `ctx_search`
    * call. This is the OTHER half of the with/without ratio (bytes_avoided is
    * the kept-out half). Sandbox compute (ctx_execute/batch/file) is work-output
    * and is excluded. Present only when the call is a retrieval call and its
@@ -1058,7 +1058,7 @@ function extractMcpToolCall(input: HookInput): SessionEvent[] {
   };
 
   // Retrieval cost (the OTHER half of the with/without ratio): when this MCP
-  // call is a `ctx_search` or `ctx_fetch_and_index` retrieval, the tool_response
+  // call is a `ctx_search` or `ctx_search` retrieval, the tool_response
   // IS the kept-out content the model paid to access — record its byte length.
   // Sandbox compute (ctx_execute/batch/file) is work-output, NOT retrieval, so
   // it is intentionally excluded. Match by suffix char-algorithmically (host
@@ -1074,7 +1074,7 @@ function extractMcpToolCall(input: HookInput): SessionEvent[] {
 }
 
 /** Tool-name suffixes that denote a RETRIEVAL call (kept-out content accessed). */
-const RETRIEVAL_TOOL_SUFFIXES = ["ctx_search", "ctx_fetch_and_index"];
+const RETRIEVAL_TOOL_SUFFIXES = ["ctx_search", "ctx_search"];
 
 /**
  * True when `toolName` ends with one of the retrieval suffixes. Char-level
@@ -1210,7 +1210,7 @@ function extractExternalRef(input: HookInput): SessionEvent[] {
 
   if (refs.size === 0) return [];
 
-  // ctx_fetch_and_index returns a preamble like
+  // ctx_search returns a preamble like
   //   "Fetched and indexed **5 sections** (47.50KB) from: <label>"
   // Parse the size to credit bytes_avoided on the event so per-session
   // honest-savings stats reflect what was kept out of the context window.

@@ -3,7 +3,7 @@
  *
  * Used by:
  *   - runBatchCommands (ctx_batch_execute parallel branch)
- *   - runBatchFetch    (ctx_fetch_and_index batch path)
+ *   - runBatchFetch    (ctx_search batch path)
  *
  * Returns Promise.allSettled-style results so one job's throw cannot
  * strand siblings. Caller maps fulfilled/rejected per index. Output

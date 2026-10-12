@@ -695,7 +695,7 @@ async function createContextModePlugin(ctx: PluginContext) {
       // Skip injection when system prompt already contains context-mode
       // routing rules (e.g. via AGENTS.md / CLAUDE.md loaded by the host).
       // Detect by checking for a quorum of distinctive tool names — any two
-      // of ctx_execute, ctx_batch_execute, ctx_fetch_and_index confirms the
+      // of ctx_execute, ctx_batch_execute, ctx_search confirms the
       // instructions are present and avoids ~2K chars of duplication.
       if (Array.isArray(output?.system)) {
         if (!systemHasRoutingInstructions(output.system)) {

@@ -52,8 +52,7 @@ try {
     const sessionId = getSessionId(input, OPTS);
     db.ensureSession(sessionId, projectDir);
 
-    // attributeAndInsertEvents both INSERTS locally and FORWARDS to the
-    // platform (gated on ~/.context-mode/platform.json) — same as stop.mjs.
+    // attributeAndInsertEvents writes the local session database.
     attributeAndInsertEvents(db, sessionId, [event], input, projectDir, "AfterModel", resolveProjectAttributions);
     db.close();
 

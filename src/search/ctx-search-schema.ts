@@ -85,7 +85,7 @@ export function buildCtxSearchInputSchema(isSharedMode: boolean) {
     // (limit:"4" instead of limit:4). Since v1.0.139 / #621 we run
     // inputSchema.parse() on that path, so a plain z.number() rejects
     // "4" with "Expected number, received string". z.coerce mirrors what
-    // ctx_batch_execute / ctx_fetch_and_index / ctx_execute already do.
+    // ctx_batch_execute / ctx_search / ctx_execute already do.
     // Fixes #627.
     limit: z
       .coerce.number()

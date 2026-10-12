@@ -136,11 +136,9 @@ describe("formatDecision", () => {
       const reason = String(output.permissionDecisionReason);
 
       // CASE A voice — REQUIRED affirmations.
-      expect(reason).toMatch(/^Redirected to /); // affirmative opening verb
-      expect(reason).toMatch(/Call ctx_execute\(/); // imperative call (alt 1)
-      expect(reason).toMatch(/ctx_fetch_and_index\(/); // alternative tool name
-      expect(reason).toContain("full network access"); // capability affirmation
-      expect(reason).toContain("Retry the same call on a transient DNS error"); // canonical retry hint
+      expect(reason).toMatch(/^Redirected to /);
+      expect(reason).toMatch(/Call ctx_execute\(/);
+      expect(reason).toContain("no network access");
 
       // CASE A voice — FORBIDDEN tokens (ADR-0003).
       expect(reason).not.toMatch(/\bblocked\b/i); // reserved for CASE B

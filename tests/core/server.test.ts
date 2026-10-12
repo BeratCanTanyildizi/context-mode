@@ -1726,15 +1726,6 @@ describe("ctx_insight: execFile migration source guard (#441)", () => {
     expect(serverSrc).not.toMatch(templateInterpolation);
   });
 
-  test("server.ts defines structured helpers (openBrowserSync, killProcessOnPort)", () => {
-    // The helpers must be the ones that return BrowserOpenResult / KillResult
-    // so the ctx_insight handler can surface failures. They live inline in
-    // server.ts (PR #452 folded the prior src/process-utils.ts back in).
-    expect(serverSrc).toMatch(/export function openBrowserSync\b/);
-    expect(serverSrc).toMatch(/export function killProcessOnPort\b/);
-    expect(serverSrc).toMatch(/export type BrowserOpenResult\b/);
-    expect(serverSrc).toMatch(/export type KillResult\b/);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2191,131 +2182,6 @@ if (LIVE) {
     });
   });
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ctx_upgrade: inline fallback for missing CLI files
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("ctx_upgrade tool: inline fallback for missing CLI", () => {
-  const serverSrc = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-  const packageJson = JSON.parse(
-    readFileSync(resolve(__dirname, "../../package.json"), "utf-8"),
-  );
-
-  test("tries cli.bundle.mjs first", () => {
-    expect(serverSrc).toContain("cli.bundle.mjs");
-    // The bundle path should be checked before fallback
-    expect(serverSrc).toMatch(/existsSync\(bundlePath\)/);
-  });
-
-  test("ctx_doctor and ctx_upgrade prefer the Codex plugin manager runtime root only for Codex", () => {
-    expect(serverSrc).toContain("parseCodexContextModePluginRoot");
-    expect(serverSrc).toContain("function resolveCodexRuntimePluginRoot");
-    expect(serverSrc).toContain("function getRuntimeAwarePackageRoot");
-
-    const helperBody = serverSrc.slice(
-      serverSrc.indexOf("function getRuntimeAwarePackageRoot"),
-      serverSrc.indexOf("// Prevent silent MCP server death"),
-    );
-    expect(helperBody).toContain('platformId === "codex"');
-    expect(helperBody).toContain("resolveCodexRuntimePluginRoot(packageRoot)");
-
-    const doctorBody = serverSrc.slice(
-      serverSrc.indexOf('server.registerTool(\n  "ctx_doctor"'),
-      serverSrc.indexOf('server.registerTool(\n  "ctx_upgrade"'),
-    );
-    const upgradeBody = serverSrc.slice(
-      serverSrc.indexOf('server.registerTool(\n  "ctx_upgrade"'),
-      serverSrc.indexOf("// ── ctx-purge"),
-    );
-
-    expect(doctorBody).toContain("getRuntimeAwarePackageRoot(currentPlatform)");
-    expect(upgradeBody).toContain("platformId = signal.platform");
-    expect(upgradeBody).toContain("getRuntimeAwarePackageRoot(platformId)");
-  });
-
-  test("tries build/cli.js second", () => {
-    expect(serverSrc).toContain('resolve(pluginRoot, "build", "cli.js")');
-  });
-
-  test("contains inline fallback with git clone when neither CLI file exists", () => {
-    // The fallback must generate an inline script with git clone via execFileSync
-    expect(serverSrc).toMatch(/git.*clone.*--depth.*1/);
-    // The inline script is written to a temp .mjs file
-    expect(serverSrc).toMatch(/\.ctx-upgrade-inline\.mjs/);
-  });
-
-  test("inline fallback copies package files to plugin root", () => {
-    // The inline script must copy the published package payload back, including
-    // newly added files such as the statusline bin directory.
-    expect(packageJson.files).toEqual(
-      expect.arrayContaining(["server.bundle.mjs", "cli.bundle.mjs", "bin"]),
-    );
-    expect(serverSrc).toContain('readFileSync(join(T,"package.json"),"utf8")');
-    expect(serverSrc).toContain("pkg.files");
-    expect(serverSrc).toContain("Array.isArray(pkg.files)");
-    // The inline cpSync passes `filter:noSymlink` to refuse copying symlinks
-    // back into the plugin tree. Anchor on this shape so future drift toward
-    // the unfiltered form is caught.
-    expect(serverSrc).toContain(
-      "cpSync(from,to,{recursive:true,force:true,filter:noSymlink})",
-    );
-    expect(serverSrc).toMatch(/npm.*install/);
-  });
-
-  test("fallback only triggers when neither CLI file exists", () => {
-    // There should be an else/fallback branch after checking both paths
-    expect(serverSrc).toMatch(/existsSync\(fallbackPath\)/);
-  });
-
-  // ── #469 follow-up: insight-cache cleanup must route through the shared
-  //    locale-independent helper, not the original inline `for /f`/`findstr`
-  //    block (which was the exact bug PR #469 fixed for ctx_insight). The
-  //    orphan call site at the top of the ctx_upgrade handler still carried
-  //    the broken pattern. Lock that down here.
-  describe("ctx_upgrade insight-cache cleanup uses killProcessOnPort (#469 follow-up)", () => {
-    // Scope assertions to the ctx_upgrade tool registration body so we don't
-    // accidentally match the shared killProcessOnPort helper definition or
-    // its tests below in the same file.
-    const upgradeMatch = serverSrc.match(
-      /server\.registerTool\(\s*"ctx_upgrade"[\s\S]*?^\);/m,
-    );
-    const upgradeBody = upgradeMatch ? upgradeMatch[0] : "";
-
-    test("ctx_upgrade tool block was located in source", () => {
-      expect(upgradeMatch).not.toBeNull();
-    });
-
-    test("ctx_upgrade does NOT contain the broken inline 'for /f' netstat parser", () => {
-      // The locale-broken Windows pattern PR #469 already removed from
-      // killProcessOnPort. Reintroducing it anywhere in ctx_upgrade is a
-      // regression on non-English Windows.
-      expect(upgradeBody).not.toMatch(/for\s+\/f\s+"tokens=5"/);
-      expect(upgradeBody).not.toMatch(/findstr\s+:4747/);
-    });
-
-    test("ctx_upgrade does NOT shell out to taskkill / lsof directly", () => {
-      // All port-cleanup must go through the shared helper. The handler
-      // itself must not hand-roll either Windows or POSIX kill commands.
-      expect(upgradeBody).not.toMatch(/taskkill/);
-      expect(upgradeBody).not.toMatch(/lsof\s+-ti:4747/);
-    });
-
-    test("ctx_upgrade routes insight-cache cleanup through killProcessOnPort(4747)", () => {
-      // Positive assertion: the handler must call the shared helper.
-      expect(upgradeBody).toMatch(/killProcessOnPort\(\s*4747\s*\)/);
-    });
-
-    test("ctx_upgrade preserves best-effort semantics (cleanup wrapped in try/catch)", () => {
-      // Cleanup failure must not block the upgrade — the try/catch at the
-      // top of the handler with the "best effort" comment must remain.
-      expect(upgradeBody).toMatch(/best effort/i);
-    });
-  });
-});
 
 // ─── ctx_purge is the ONLY reset mechanism ──────────────────────────────────
 
@@ -2885,50 +2751,6 @@ describe("ContentStore purge behavior", () => {
       "utf-8",
     );
     expect(moduleSrc).toContain("unlinkSync");
-  });
-});
-
-// ─── Version outdated warning ────────────────────────────────────────────────
-
-describe("Version outdated warning in trackResponse", () => {
-  const serverSrc = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-
-  test("fetchLatestVersion function exists and uses npm registry", () => {
-    expect(serverSrc).toContain("function fetchLatestVersion");
-    expect(serverSrc).toContain("registry.npmjs.org/context-mode");
-  });
-
-  test("version check fires in main() after server.connect", () => {
-    const mainFn = serverSrc.slice(serverSrc.indexOf("async function main"));
-    expect(mainFn).toContain("fetchLatestVersion");
-  });
-
-  test("trackResponse prepends warning when outdated", () => {
-    const trackFn = serverSrc.slice(
-      serverSrc.indexOf("function trackResponse"),
-      serverSrc.indexOf("function trackIndexed"),
-    );
-    expect(trackFn).toContain("_latestVersion");
-    expect(trackFn).toContain("outdated");
-  });
-
-  test("warning uses burst cadence (3 calls then silent)", () => {
-    expect(serverSrc).toContain("VERSION_BURST_SIZE");
-    expect(serverSrc).toContain("VERSION_SILENT_MS");
-    expect(serverSrc).toContain("_warningBurstCount");
-  });
-
-  test("getUpgradeHint returns platform-specific command", () => {
-    expect(serverSrc).toContain("function getUpgradeHint");
-    // Claude Code gets slash command
-    expect(serverSrc).toMatch(/claude.code.*ctx.upgrade|ctx.upgrade.*claude.code/i);
-    // npm platforms get npm update
-    expect(serverSrc).toContain("npm update -g context-mode");
-    // OpenClaw gets its own command
-    expect(serverSrc).toContain("npm run install:openclaw");
   });
 });
 
@@ -3546,493 +3368,6 @@ describe("runPool primitive", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ctx_fetch_and_index batch path — schema + handler-level checks
-// (Full subprocess fetch tested in tests/mcp-integration.ts;
-//  these tests verify schema acceptance + serial-index contract via source-level read.)
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("ctx_fetch_and_index batch refactor", () => {
-  const fetchHandlerSrc = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-
-  test("schema accepts both legacy {url} and batch {requests}", () => {
-    expect(fetchHandlerSrc).toContain('url: z.string().optional()');
-    expect(fetchHandlerSrc).toContain('requests: z');
-    // Zod array of {url, source?} wrapped with preprocess for native plugin coercion
-    expect(fetchHandlerSrc).toContain('z.preprocess(');
-    expect(fetchHandlerSrc).toContain('coerceJsonArray');
-    expect(fetchHandlerSrc).toContain('url: z.string()');
-    expect(fetchHandlerSrc).toContain('source: z.string().optional()');
-  });
-
-  test("handler exposes concurrency 1-8 with default 1", () => {
-    // Find the fetch_and_index registerTool block, then assert concurrency schema near it.
-    // Stop anchor: the next registerTool call (ctx_batch_execute).
-    const fetchBlockMatch = fetchHandlerSrc.match(/registerTool\(\s*"ctx_fetch_and_index"[\s\S]+?registerTool\(\s*"ctx_batch_execute"/);
-    expect(fetchBlockMatch).not.toBeNull();
-    const block = fetchBlockMatch![0];
-    expect(block).toContain("concurrency: z");
-    expect(block).toMatch(/\.min\(1\)\s*\n?\s*\.max\(8\)/);
-    expect(block).toContain(".default(1)");
-  });
-
-  test("handler exposes per-call ttl override for fetch cache freshness (#648)", () => {
-    const fetchBlockMatch = fetchHandlerSrc.match(/registerTool\(\s*"ctx_fetch_and_index"[\s\S]+?registerTool\(\s*"ctx_batch_execute"/);
-    expect(fetchBlockMatch).not.toBeNull();
-    const block = fetchBlockMatch![0];
-    expect(block).toContain("ttl: z");
-    expect(block).toContain("Override the cache freshness window");
-    expect(block).toContain("`ttl: 0` bypasses the cache like `force: true`");
-    expect(block).toContain("async ({ url, source, requests, concurrency, force, ttl })");
-    expect(block).toContain("fetchOneUrl(req.url, req.source, force, ttl)");
-  });
-
-  test("fetchOneUrl applies ttl override and treats ttl=0 as cache bypass (#648)", () => {
-    const fetchOneSrc = fetchHandlerSrc.match(/async function fetchOneUrl\([\s\S]+?const outputPath =/m);
-    expect(fetchOneSrc).not.toBeNull();
-    const block = fetchOneSrc![0];
-    expect(block).toContain("ttl: number | undefined");
-    expect(block).toContain("if (!force && ttl !== 0)");
-    expect(block).toContain("const cacheTtlMs = ttl ?? FETCH_TTL_MS");
-    expect(block).toContain("ageMs < cacheTtlMs");
-    expect(block).toContain("ttlStr: formatFetchTtl(cacheTtlMs)");
-  });
-
-  test("PARALLELIZE I/O guidance + locked requests:[] schema in description", () => {
-    // PR #683 / ADR-0002: emoji bullets replaced with prose. PR #683 WS3
-    // (canonical structure) folded the dedicated CONCURRENCY: section into
-    // the WHEN: / RETURNS: prose so the description carries only the
-    // canonical four sections (WHEN / WHEN NOT / RETURNS / EXAMPLE).
-    // PR #683 second amendment then deepened the concurrency guidance
-    // (gh API cap 4, single-writer mechanism explanation) and reframed the
-    // FTS5 serialization in more technical terms ("write phase always runs
-    // serially because SQLite is a single-writer store").
-    // This test pins the load-bearing concepts (requests:[] batch shape,
-    // 4-8 I/O window, FTS5 serial-write contract) using semantic regexes
-    // so future copy-edits don't break it.
-    expect(fetchHandlerSrc).toMatch(/requests(:\s*\[|`\s*array)/);
-    expect(fetchHandlerSrc).toMatch(/4-8\s+(for|stable)/);
-    expect(fetchHandlerSrc).toMatch(/FTS5[^.]*(serializes? writes?|write phase[^.]*serial|single-writer)/);
-  });
-
-  test("serial-write contract: index drain is a for-loop calling indexFetched serially", () => {
-    // The handler must NOT spawn parallel store.index calls. The drain is a
-    // for-loop over `settled` calling indexFetched serially. Anti-pattern check.
-    expect(fetchHandlerSrc).toContain("Serial index drain");
-    expect(fetchHandlerSrc).toContain("indexFetched(v)");
-    // No `await Promise.all(... indexFetched ...)` pattern anywhere
-    expect(fetchHandlerSrc).not.toMatch(/Promise\.all\([^)]*indexFetched/);
-  });
-
-  test("backward compat: legacy single-URL response wording preserved", () => {
-    // Original handler returned "Cached: **${label}**" / "Fetched and indexed **N sections**"
-    // The refactor must keep these EXACT strings for the legacy path so
-    // tests/mcp-integration.ts and any user-side scripts grepping the response don't break.
-    expect(fetchHandlerSrc).toContain("Cached: **${r.label}**");
-    expect(fetchHandlerSrc).toContain("Fetched and indexed **${r.indexed.totalChunks} sections**");
-    // The source escapes backticks inside a template literal — match the escaped form.
-    expect(fetchHandlerSrc).toContain("To refresh: call ctx_fetch_and_index again with");
-    expect(fetchHandlerSrc).toContain("force: true");
-  });
-
-  test("isLegacySingle gate prevents batch response wrapping for single-URL calls", () => {
-    expect(fetchHandlerSrc).toContain("const isLegacySingle = !requests && batch.length === 1");
-    expect(fetchHandlerSrc).toContain("if (isLegacySingle)");
-  });
-
-  test("capped-concurrency note appears only when capped", () => {
-    expect(fetchHandlerSrc).toMatch(/cappedNote\s*=\s*capped\s*\?/);
-    // Compact form `cap=N/Mcpu` (replaces verbose "capped from N to M; M cores available").
-    expect(fetchHandlerSrc).toContain("cap=${effectiveConcurrency}/${cpus().length}cpu");
-  });
-
-  test("batch isError only when ALL URLs fail (errorCount === batch.length)", () => {
-    expect(fetchHandlerSrc).toContain("isError: errorCount === batch.length");
-  });
-
-  test("batch preview is capped to prevent context flooding (review F2)", () => {
-    // Per-URL preview in batch mode capped tightly so an 8-URL batch doesn't
-    // dump ~24KB of context (8 × 3072 char single-URL preview cap).
-    expect(fetchHandlerSrc).toContain("FETCH_BATCH_PREVIEW_LIMIT");
-    // Cap value must be ≤500 chars (8 URLs × 500 = ~4KB max snippets total)
-    const limitMatch = fetchHandlerSrc.match(/FETCH_BATCH_PREVIEW_LIMIT\s*=\s*(\d+)/);
-    expect(limitMatch).not.toBeNull();
-    expect(parseInt(limitMatch![1])).toBeLessThanOrEqual(500);
-    // Must actually be applied to per-URL previews in the batch loop
-    expect(fetchHandlerSrc).toMatch(/preview\.length\s*>\s*FETCH_BATCH_PREVIEW_LIMIT/);
-  });
-
-  test("batch header uses singular form for count=1 (review F5 plural fix)", () => {
-    // Grammar correctness in the compact status line: "1 errors" → "1 error"
-    // via the fmt() helper, so the line stays grammatical at any count.
-    expect(fetchHandlerSrc).toContain('const fmt = (n: number, sing: string, plur: string)');
-    expect(fetchHandlerSrc).toContain('n === 1 ? sing : plur');
-  });
-
-  test("batch header uses compact format (review F5)", () => {
-    // Old: "Batch fetched N URLs at concurrency=X (capped from Y to X; Z cores available): a fetched, b cached, c errors. d new sections (eKB total)."
-    // New: "fetched N c=X cap=X/Zcpu. ok=a cache=b err=c. d sections eKB."
-    expect(fetchHandlerSrc).toContain("`fetched ${batch.length} c=${effectiveConcurrency}");
-    expect(fetchHandlerSrc).toContain("ok=${fetchedCount} cache=${cachedCount} err=${errorCount}");
-    expect(fetchHandlerSrc).not.toContain("Batch fetched"); // old verbose wording gone
-  });
-
-  test("fetchOneUrl is parallel-safe (no SQLite writes)", () => {
-    // Verify by inspecting the helper source: it calls store.getSourceMeta (read)
-    // but never store.index/indexJSON/indexPlainText (writes).
-    const fetchOneSrc = fetchHandlerSrc.match(/async function fetchOneUrl\([\s\S]+?^}/m);
-    expect(fetchOneSrc).not.toBeNull();
-    const block = fetchOneSrc![0];
-    expect(block).toContain("store.getSourceMeta"); // read OK
-    expect(block).not.toContain("store.index"); // no writes
-    expect(block).not.toContain("store.indexJSON");
-    expect(block).not.toContain("store.indexPlainText");
-  });
-
-  test("indexFetched is serial-only (single FTS5 write per call)", () => {
-    const indexFetchedSrc = fetchHandlerSrc.match(/function indexFetched\([\s\S]+?^}/m);
-    expect(indexFetchedSrc).not.toBeNull();
-    const block = indexFetchedSrc![0];
-    // Has exactly one of: store.index / store.indexJSON / store.indexPlainText per branch
-    expect(block).toContain("store.indexJSON");
-    expect(block).toContain("store.indexPlainText");
-    expect(block).toContain("store.index");
-  });
-
-  test("force and requests parameters coerce string types from in-process native plugins", () => {
-    // OpenCode/Kilo in-process plugin bridge stringifies primitive types
-    // (boolean → "false", array → "[]"). z.preprocess(coerceBoolean/coerceJsonArray)
-    // defends against this in the Zod parse step. This test verifies those
-    // preprocess wrappers are present (issue #627 follow-up).
-    const fetchBlockMatch = fetchHandlerSrc.match(/registerTool\(\s*"ctx_fetch_and_index"[\s\S]+?registerTool\(\s*"ctx_batch_execute"/);
-    expect(fetchBlockMatch).not.toBeNull();
-    const block = fetchBlockMatch![0];
-    // force must coerce "false"/"true" strings → boolean
-    expect(block).toMatch(/force:\s*z\s*\n?\s*\.preprocess\(\s*coerceBoolean\s*,\s*z\.boolean\(\)\)/);
-    // requests must coerce JSON-stringified arrays
-    expect(block).toMatch(/requests:\s*z\s*\n?\s*\.preprocess\(\s*coerceJsonArray\s*,/);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SSRF guard — ctx_fetch_and_index URL/IP allowlist (PR #401 ops review)
-// ═══════════════════════════════════════════════════════════════════════════
-
-import { classifyIp } from "../../src/server.js";
-
-describe("classifyIp — SSRF guard IP classifier", () => {
-  test("hard-blocks IMDS / link-local IPv4 (169.254.0.0/16)", () => {
-    // 169.254.169.254 = AWS/GCP/Azure cloud metadata endpoint — never legitimate
-    expect(classifyIp("169.254.169.254")).toBe("block");
-    expect(classifyIp("169.254.0.1")).toBe("block");
-    expect(classifyIp("169.254.255.254")).toBe("block");
-  });
-
-  test("hard-blocks multicast / reserved IPv4 (224+ and 0.0.0.0/8)", () => {
-    expect(classifyIp("224.0.0.1")).toBe("block");
-    expect(classifyIp("239.255.255.255")).toBe("block");
-    expect(classifyIp("255.255.255.255")).toBe("block");
-    expect(classifyIp("0.0.0.0")).toBe("block");
-    expect(classifyIp("0.1.2.3")).toBe("block");
-  });
-
-  test("hard-blocks malformed IPv4", () => {
-    expect(classifyIp("999.999.999.999")).toBe("block");
-    expect(classifyIp("not-an-ip")).toBe("block");
-    expect(classifyIp("1.2.3")).toBe("block");
-  });
-
-  test("hard-blocks IPv6 link-local + multicast + unspecified", () => {
-    expect(classifyIp("fe80::1")).toBe("block"); // link-local
-    expect(classifyIp("ff00::1")).toBe("block"); // multicast
-    expect(classifyIp("::")).toBe("block");      // unspecified
-  });
-
-  test("private (allow by default, block under strict mode): RFC1918 + loopback IPv4", () => {
-    // Allowed by default — developer's local dev server / internal network
-    expect(classifyIp("127.0.0.1")).toBe("private");
-    expect(classifyIp("127.255.255.255")).toBe("private");
-    expect(classifyIp("10.0.0.5")).toBe("private");
-    expect(classifyIp("10.255.255.255")).toBe("private");
-    expect(classifyIp("172.16.0.1")).toBe("private");
-    expect(classifyIp("172.31.255.255")).toBe("private");
-    expect(classifyIp("172.15.0.1")).toBe("public");  // outside RFC1918
-    expect(classifyIp("172.32.0.1")).toBe("public");  // outside RFC1918
-    expect(classifyIp("192.168.1.1")).toBe("private");
-    expect(classifyIp("192.168.255.255")).toBe("private");
-  });
-
-  test("private: IPv6 loopback + ULA (fc00::/7)", () => {
-    expect(classifyIp("::1")).toBe("private");
-    expect(classifyIp("fc00::1")).toBe("private");
-    expect(classifyIp("fd12:3456:789a::1")).toBe("private");
-  });
-
-  test("public: real internet IPs", () => {
-    expect(classifyIp("8.8.8.8")).toBe("public");           // Google DNS
-    expect(classifyIp("1.1.1.1")).toBe("public");           // Cloudflare DNS
-    expect(classifyIp("140.82.121.4")).toBe("public");      // github.com
-    expect(classifyIp("2001:4860:4860::8888")).toBe("public"); // Google DNS IPv6
-  });
-
-  test("IPv4-mapped IPv6 recurses through IPv4 classifier", () => {
-    // ::ffff:127.0.0.1 is just 127.0.0.1 wrapped in IPv6 mapping
-    expect(classifyIp("::ffff:127.0.0.1")).toBe("private");
-    expect(classifyIp("::ffff:169.254.169.254")).toBe("block"); // IMDS via IPv4-mapped
-    expect(classifyIp("::ffff:8.8.8.8")).toBe("public");
-  });
-});
-
-describe("SSRF guard — ssrfGuard policy in src/server.ts", () => {
-  const serverSrc = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-
-  test("allowlists only http: and https: schemes", () => {
-    expect(serverSrc).toContain('parsed.protocol !== "http:"');
-    expect(serverSrc).toContain('parsed.protocol !== "https:"');
-    // file:// / gopher:// / javascript: implicitly rejected
-  });
-
-  test("blocks IPs classified as block (link-local/IMDS/multicast)", () => {
-    expect(serverSrc).toContain('verdict === "block"');
-    expect(serverSrc).toContain("link-local / IMDS / multicast / reserved");
-  });
-
-  test("strict mode opt-in via CTX_FETCH_STRICT=1", () => {
-    expect(serverSrc).toContain('process.env.CTX_FETCH_STRICT === "1"');
-    expect(serverSrc).toContain('verdict === "private" && strict');
-  });
-
-  test("ssrfGuard runs BEFORE cache lookup (poisoned cache defense)", () => {
-    // fetchOneUrl must call ssrfGuard before getSourceMeta — otherwise a
-    // previously-poisoned source label could serve attacker content from cache.
-    const fetchOneSrc = serverSrc.match(/async function fetchOneUrl\([\s\S]+?^}/m);
-    expect(fetchOneSrc).not.toBeNull();
-    const block = fetchOneSrc![0];
-    const guardIdx = block.indexOf("ssrfGuard");
-    const cacheIdx = block.indexOf("getSourceMeta");
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(cacheIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeLessThan(cacheIdx);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// buildFetchCode — embedded SSRF guard contract (#476 review follow-ups)
-// ═══════════════════════════════════════════════════════════════════════════
-
-import { buildFetchCode } from "../../src/server.js";
-
-describe("buildFetchCode — embedded SSRF guard contract", () => {
-  const generated = buildFetchCode("https://example.com/x", "/tmp/x");
-
-  test("strips proxy env vars (HTTP_PROXY / HTTPS_PROXY / ALL_PROXY)", () => {
-    // A configured outbound proxy would route fetch through an arbitrary
-    // target; DNS resolution would happen at the proxy and the in-subprocess
-    // DNS guard would never see the rebound IP. The generated subprocess
-    // source must delete every proxy env var before any fetch can run.
-    expect(generated).toMatch(/delete process\.env\.HTTP_PROXY/);
-    expect(generated).toMatch(/delete process\.env\.HTTPS_PROXY/);
-    expect(generated).toMatch(/delete process\.env\.ALL_PROXY/);
-    expect(generated).toMatch(/delete process\.env\.http_proxy/);
-    expect(generated).toMatch(/delete process\.env\.https_proxy/);
-    expect(generated).toMatch(/delete process\.env\.all_proxy/);
-  });
-
-  test("embedded SSRF classifier is callable as `classifyIp` even when bundler renames the export (#bug-v1.0.133)", () => {
-    // REGRESSION: esbuild renames top-level `classifyIp` to a short name
-    // (e.g. `_h`) in server.bundle.mjs. The previous implementation embedded
-    // `classifyIp.toString()` directly, which yielded `function _h(t){...}`
-    // — but the subprocess template invokes `classifyIp(...)` literally and
-    // the function's own internal recursion uses the bundler-mangled name.
-    // Result was 100% failure of ctx_fetch_and_index in the published build:
-    //   ReferenceError: classifyIp is not defined
-    //     at patchedPromisesLookup (.../script.js:71:19)
-    // The fix must: (1) expose the canonical `classifyIp` identifier in the
-    // embedded scope, AND (2) preserve recursion under whatever name the
-    // bundler chose. Validate by evaluating the embedded source in an
-    // isolated scope and confirming `classifyIp` resolves and works for
-    // both direct calls AND the recursive IPv4-mapped-IPv6 path.
-    expect(generated).toMatch(/var\s+classifyIp\s*=/);
-
-    // Extract the self-contained classifier declaration block (var classifyIp
-    // = function classifyIp(rawIp){...};) and evaluate it in a fresh function
-    // scope where neither `classifyIp` nor any bundler alias exists in the
-    // outer closure. The canonical name MUST resolve and behave.
-    const classifyIpDeclMatch = generated.match(
-      /var\s+\w+\s*=\s*function\s+\w+\s*\(\s*rawIp\s*\)[\s\S]+?\n\};(?:\s*var\s+classifyIp\s*=\s*\w+;)?/,
-    );
-    expect(
-      classifyIpDeclMatch,
-      "embedded classifyIp declaration block must be extractable from buildFetchCode output",
-    ).not.toBeNull();
-    const classifierBlock = classifyIpDeclMatch![0];
-
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const probe = new Function(`
-      ${classifierBlock}
-      return {
-        imds: classifyIp("169.254.169.254"),
-        loopback: classifyIp("127.0.0.1"),
-        publicIp: classifyIp("8.8.8.8"),
-        mapped: classifyIp("::ffff:169.254.169.254"),
-      };
-    `);
-    const result = probe() as Record<string, string>;
-    expect(result.imds).toBe("block");
-    expect(result.loopback).toBe("private");
-    expect(result.publicIp).toBe("public");
-    // IPv4-mapped IPv6 forces the internal recursive call path; if recursion
-    // is broken (bundler-mangled self-reference unresolved), this throws.
-    expect(result.mapped).toBe("block");
-  });
-
-  test("patches dns/promises lookup (separate function reference from dns.lookup)", () => {
-    // Patching dns.lookup does NOT affect dnsPromises.lookup. Today undici
-    // uses callback-form dns.lookup so default fetch is covered, but the
-    // invariant is fragile — a future undici switch or any caller using
-    // dnsPromises.lookup directly would bypass the guard.
-    // Match either literal 'node:dns/promises' or split-string 'no'+'de:dns/promises'
-    // The split form is required by the G3 bundle invariant — the literal would
-    // false-positive scripts/assert-bundle.mjs's raw-bare-require-node-builtin check.
-    expect(generated).toMatch(
-      /const dnsPromises\s*=\s*require\([^)]*dns\/promises['"]\)/,
-    );
-    expect(generated).toMatch(/dnsPromises\.lookup\s*=\s*async\s+function/);
-    expect(generated).toMatch(/SSRF blocked/);
-  });
-
-  test("patches dns.resolve4 and dns.resolve6 (libuv bypass path)", () => {
-    // dns.resolve* uses a different code path (no getaddrinfo, no /etc/hosts)
-    // than dns.lookup — they must be patched separately or the guard is
-    // trivially bypassed by any caller using dns.resolve* directly.
-    expect(generated).toMatch(/['"]resolve4['"]\s*,\s*['"]resolve6['"]/);
-    expect(generated).toMatch(/dns\[name\]\s*=\s*function/);
-  });
-
-  describe("buildFetchCode — redirect chain rebinding", () => {
-    // SSRF rebinding via HTTP redirect chain bypasses the parent's pre-flight
-    // ssrfGuard: a 302 to http://attacker/ (or an IPv4-mapped IMDS literal)
-    // sends the subprocess fetch to an alternate host the parent never
-    // classified. The connect-time DNS guard catches some cases, but a
-    // direct-IP redirect target may not trigger getaddrinfo at all. Mitigate
-    // at the HTTP layer: emit `redirect: 'manual'` in the generated source,
-    // re-validate every Location header against ssrfGuard's classifier, and
-    // cap the redirect chain so an attacker cannot exhaust the loop.
-    const generated = buildFetchCode("https://example.com/x", "/tmp/x");
-
-    test("generated source uses redirect: 'manual' (no follow default)", () => {
-      // The default `redirect: 'follow'` lets undici chase a 3xx Location
-      // BEFORE the in-subprocess DNS guard sees the target hostname (and even
-      // when it does, a direct IPv4-literal redirect skips getaddrinfo). The
-      // generated subprocess source MUST opt out of automatic following so
-      // every hop is re-validated by classifyIp before another fetch fires.
-      expect(generated).toMatch(/redirect:\s*['"]manual['"]/);
-    });
-
-    test("manual redirect handler validates Location host via classifyIp", () => {
-      // After receiving a 3xx, the subprocess must parse the Location header,
-      // resolve its host, and run the same classifyIp policy as ssrfGuard
-      // before issuing the next fetch. Without this re-check, an attacker can
-      // redirect to http://169.254.169.254/ or any rebinding-friendly host.
-      expect(generated).toMatch(/Location/);
-      expect(generated).toMatch(/classifyIp\s*\(/);
-      // The redirect handler specifically must invoke classifyIp on the
-      // redirect target — not just the parent's pre-flight call site.
-      expect(generated).toMatch(/redirect[\s\S]{0,400}classifyIp/);
-    });
-
-    test("redirect chain is capped (no unbounded follow)", () => {
-      // An attacker controlling redirect responses could otherwise loop the
-      // subprocess forever or chain enough hops to amortize a slow rebinding
-      // attack. Cap at 5 — the standard browser limit — and abort cleanly.
-      expect(generated).toMatch(/(maxRedirects|MAX_REDIRECTS|redirectCount\s*[<>]=?\s*5|<\s*5|<=\s*5)/);
-    });
-
-    test("non-3xx response path still emits content (preserves 200 semantics)", () => {
-      // Manual redirect handling must not break the happy path: a 200 OK
-      // still flows through emit() with the right content-type branch. Pin
-      // the existing emit() call sites so a refactor that drops them fails.
-      expect(generated).toMatch(/emit\(['"]json['"]/);
-      expect(generated).toMatch(/emit\(['"]html['"]/);
-      expect(generated).toMatch(/emit\(['"]text['"]/);
-    });
-  });
-
-  test("classifyIp embeds without references to module scope", () => {
-    // classifyIp is embedded into the subprocess via Function.prototype.toString().
-    // If a future change ever has classifyIp close over a module-scope helper
-    // (e.g. a regex constant declared above it), the embedded source will
-    // ReferenceError at parse or call time — silently breaking the guard. Pin
-    // the contract: classifyIp source must contain no identifiers that can
-    // only resolve in module scope.
-    const src = classifyIp.toString();
-    const forbidden = [
-      "require(",
-      "process.",
-      "globalThis.",
-      "global.",
-      "__dirname",
-      "__filename",
-    ];
-    for (const ident of forbidden) {
-      expect(src).not.toContain(ident);
-    }
-    // Roundtrip: eval the source in an empty vm context with no globals,
-    // then invoke it. This is exactly what the subprocess does.
-    const { runInNewContext } = require("node:vm");
-    const ctx: Record<string, unknown> = {};
-    runInNewContext(`${src}\n;globalThis.fn = classifyIp;`, ctx);
-    const fn = ctx.fn as (ip: string) => "block" | "private" | "public";
-    expect(fn("169.254.169.254")).toBe("block");
-    expect(fn("8.8.8.8")).toBe("public");
-    expect(fn("10.0.0.1")).toBe("private");
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// buildFetchCode — IPv6 zone-id + generic dns.resolve (#476 round-3)
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("buildFetchCode — IPv6 zone-id + generic dns.resolve", () => {
-  test("classifyIp strips IPv6 zone-id before classification (link-local)", () => {
-    // fe80::/10 link-local with %eth0 zone suffix must still be blocked.
-    // Today the lowercase prefix check `fe8`/`fe9`/`fea`/`feb` accidentally
-    // catches link-local even with a zone suffix — but only because the
-    // suffix is appended *after* the prefix. Pin the behavior explicitly so
-    // a future refactor cannot regress.
-    expect(classifyIp("fe80::1%eth0")).toBe("block");
-    expect(classifyIp("fe80::1%25eth0")).toBe("block"); // URL-encoded zone
-  });
-
-  test("classifyIp strips IPv6 zone-id before classification (non-link-local)", () => {
-    // RFC 6874 permits zone identifiers on any IPv6 address (not just
-    // link-local). Without zone stripping, a loopback `::1%eth0` would NOT
-    // match the strict equality `lower === "::1"` and would leak through as
-    // "public". Pin every class so the strip happens before classification.
-    expect(classifyIp("::1%eth0")).toBe("private");        // loopback w/ zone
-    expect(classifyIp("fc00::1%eth0")).toBe("private");    // ULA w/ zone
-    expect(classifyIp("ff00::1%eth0")).toBe("block");      // multicast w/ zone
-    expect(classifyIp("2001:db8::1%eth0")).toBe("public"); // doc range w/ zone
-  });
-
-  test("buildFetchCode patches generic dns.resolve (not just resolve4/resolve6)", () => {
-    // dns.resolve is the polymorphic entrypoint that dispatches on rrtype.
-    // Today only resolve4/resolve6 are patched; a caller using
-    // `dns.resolve(host, 'A', cb)` or default rrtype goes through an
-    // un-guarded code path. Patch the generic wrapper so every A/AAAA
-    // record runs through classifyIp.
-    const generated = buildFetchCode("https://example.com/x", "/tmp/x");
-    expect(generated).toMatch(/dns\.resolve\s*=\s*function/);
-    expect(generated).toMatch(/classifyIp/);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // ctx_doctor resource cleanup regression (#247)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4060,12 +3395,6 @@ function sendRpc(proc: ChildProcess, msg: Record<string, unknown>): void {
   proc.stdin!.write(JSON.stringify(msg) + "\n");
 }
 
-/**
- * Read RPC responses from the server stdout until all `expectedIds` have
- * arrived or `timeoutMs` elapses, whichever comes first. Early-exit keeps
- * the happy path at <1s and gives Windows CI its full timeout budget when
- * process spawn + native-module load runs slow.
- */
 function collectRpcResponses(
   proc: ChildProcess,
   timeoutMs: number,
@@ -4085,7 +3414,6 @@ function collectRpcResponses(
 
     proc.stdout!.on("data", (d: Buffer) => {
       buffer += d.toString();
-      // Drain whole lines from the buffer. Stdout is newline-delimited JSON-RPC.
       let idx: number;
       while ((idx = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, idx).trim();
@@ -4235,7 +3563,7 @@ describe("ctx_doctor hook script checks", () => {
   );
 
   test("resolves relative hook script paths against pluginRoot", () => {
-    const doctorSection = serverSrc.slice(serverSrc.indexOf("ctx_doctor"), serverSrc.indexOf("ctx_upgrade"));
+    const doctorSection = serverSrc.slice(serverSrc.indexOf("ctx_doctor"), serverSrc.indexOf("ctx_purge"));
     expect(doctorSection).toContain("for (const scriptPath of hookScriptPaths)");
     expect(doctorSection).toContain("const hookPath = resolve(pluginRoot, scriptPath)");
     expect(doctorSection).not.toContain("for (const hookPath of hookScriptPaths)");
@@ -4316,546 +3644,6 @@ describe("getDefaultSessionDir uses pre-detection when adapter not yet detected"
 // Bug: cache key was `source ?? url`, so two distinct URLs sharing a `source`
 // label silently returned the cached first response instead of fetching the
 // second. Fix composes the cache key from label+url for cache lookup.
-
-describe("ctx_fetch_and_index cache key includes URL (Fix 6/10)", () => {
-  test("composeFetchCacheKey: same label + different URLs produce different keys", async () => {
-    const { composeFetchCacheKey } = await import("../../src/fetch-cache.js");
-    const k1 = composeFetchCacheKey("Docs", "https://x.com/a");
-    const k2 = composeFetchCacheKey("Docs", "https://y.com/b");
-    expect(k1).not.toBe(k2);
-  });
-
-  test("composeFetchCacheKey: same label + same URL → same key (legitimate cache hit)", async () => {
-    const { composeFetchCacheKey } = await import("../../src/fetch-cache.js");
-    const k1 = composeFetchCacheKey("Docs", "https://x.com/a");
-    const k2 = composeFetchCacheKey("Docs", "https://x.com/a");
-    expect(k1).toBe(k2);
-  });
-
-  test("server.ts uses composeFetchCacheKey for cache lookup (no bare-label collision)", () => {
-    const serverSrc = readFileSync(
-      resolve(__dirname, "../../src/server.ts"),
-      "utf-8",
-    );
-    // The cache lookup may live in the handler block OR in an extracted helper
-    // (post-refactor: `fetchOneUrl` is the parallel-safe fetcher invoked by both
-    // single-URL and batch paths). Either location must use composeFetchCacheKey,
-    // not the bare label/url variable.
-
-    // composeFetchCacheKey must be imported and referenced
-    expect(serverSrc).toContain('from "./fetch-cache.js"');
-    expect(serverSrc).toContain("composeFetchCacheKey");
-
-    // Find ANY getSourceMeta call across the file
-    const lookupCall = serverSrc.match(/getSourceMeta\(\s*([^)]+)\s*\)/);
-    expect(lookupCall, "getSourceMeta call missing").not.toBeNull();
-    const arg = lookupCall![1].trim();
-    // Must NOT be the bare `label` variable (that was the bug).
-    expect(arg).not.toBe("label");
-    // Argument must be a key derived from composition (`cacheKey`, `storageLabel`,
-    // or a direct `composeFetchCacheKey(...)` call). Reject any single-token
-    // identifier that doesn't carry the composition contract.
-    expect(arg).toMatch(/cacheKey|storageLabel|composeFetchCacheKey/);
-  });
-
-  test("ContentStore: per-(label,url) keys do not collide on getSourceMeta", () => {
-    const store = new ContentStore(":memory:");
-    // Simulate two distinct URLs sharing a user-supplied "source" label,
-    // but stored under composed keys per the fix.
-    const URL_A = "https://example.com/a";
-    const URL_B = "https://example.com/b";
-    const labelA = `Docs::${URL_A}`;
-    const labelB = `Docs::${URL_B}`;
-
-    store.index({ content: "# A\nContent A unique alpha", source: labelA });
-    // Before fix: a second cache lookup with the bare "Docs" label would
-    // hit A's meta and short-circuit. After fix: lookup uses labelB → miss.
-    expect(store.getSourceMeta(labelB)).toBeNull();
-    // Cache hit for the same (label,url) still works.
-    expect(store.getSourceMeta(labelA)).not.toBeNull();
-
-    // Now index B and verify both remain searchable independently.
-    store.index({ content: "# B\nContent B unique bravo", source: labelB });
-    const aResults = store.search("alpha", 5, labelA);
-    const bResults = store.search("bravo", 5, labelB);
-    expect(aResults.length).toBeGreaterThan(0);
-    expect(bResults.length).toBeGreaterThan(0);
-    store.close();
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ctx_insight process helpers (formerly tests/core/process-utils.test.ts)
-//
-// Behavioral tests for browserOpenArgv / openBrowserSync / killProcessOnPort
-// (canonical home: src/server.ts). PR #452 review flagged that source-grep
-// tests pin implementation strings, not the actual security property. These
-// tests mock spawnSync directly and assert:
-//
-//   - argv arrays only — never `shell: true`
-//   - per-platform fallback semantics (xdg-open → sensible-browser)
-//   - Windows netstat parser anchors on LISTENING + local-address column
-//   - per-pid kill failures do not abort the remaining loop
-//   - structured results surface failure to callers
-// ═══════════════════════════════════════════════════════════════════════════
-
-import { vi } from "vitest";
-import {
-  browserOpenArgv,
-  openBrowserSync,
-  killProcessOnPort,
-  type SpawnSyncFn,
-} from "../../src/server.js";
-
-type Captured = { cmd: string; args: readonly string[]; opts: unknown };
-type FakeReturn = { status: number | null; stdout?: string; error?: Error };
-
-function makeRunner(
-  responses: Array<FakeReturn | ((cmd: string, args: readonly string[]) => FakeReturn)>,
-): { runner: SpawnSyncFn; calls: Captured[] } {
-  const calls: Captured[] = [];
-  let i = 0;
-  const runner: SpawnSyncFn = (cmd, args, opts) => {
-    calls.push({ cmd, args, opts });
-    const next = responses[i++];
-    const r = typeof next === "function" ? next(cmd, args) : next;
-    return {
-      pid: 0,
-      output: [],
-      stdout: r?.stdout ?? "",
-      stderr: "",
-      status: r?.status ?? 0,
-      signal: null,
-      error: r?.error,
-    } as ReturnType<SpawnSyncFn>;
-  };
-  return { runner, calls };
-}
-
-describe("browserOpenArgv", () => {
-  test("darwin → open url", () => {
-    expect(browserOpenArgv("http://x", "darwin")).toEqual([
-      { cmd: "open", args: ["http://x"] },
-    ]);
-  });
-
-  test("win32 → cmd /c start with empty title", () => {
-    // The empty-string title arg is the security-relevant detail: if it were
-    // dropped, `start "http://attacker?evil=1"` would be parsed as a window
-    // title rather than a URL.
-    expect(browserOpenArgv("http://x", "win32")).toEqual([
-      { cmd: "cmd", args: ["/c", "start", "", "http://x"] },
-    ]);
-  });
-
-  test("linux → xdg-open then sensible-browser fallback", () => {
-    expect(browserOpenArgv("http://x", "linux")).toEqual([
-      { cmd: "xdg-open", args: ["http://x"] },
-      { cmd: "sensible-browser", args: ["http://x"] },
-    ]);
-  });
-
-  test("argv contains url as a single argument — no shell metachar expansion", () => {
-    // A URL with shell metachars must appear verbatim as one argv entry on
-    // every platform. If it were ever interpolated into a shell string, the
-    // `; rm -rf /` would split into a separate command.
-    const evil = "http://x; rm -rf /; #";
-    for (const platform of ["darwin", "win32", "linux"] as const) {
-      const attempts = browserOpenArgv(evil, platform);
-      for (const { args } of attempts) {
-        expect(args).toContain(evil);
-      }
-    }
-  });
-});
-
-describe("openBrowserSync", () => {
-  test("darwin: spawnSync('open', [url]) with no shell:true", () => {
-    const { runner, calls } = makeRunner([{ status: 0 }]);
-    const r = openBrowserSync("http://x", "darwin", runner);
-
-    expect(r.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].cmd).toBe("open");
-    expect(calls[0].args).toEqual(["http://x"]);
-    expect(calls[0].opts).not.toHaveProperty("shell", true);
-  });
-
-  test("win32: cmd /c start '' url, no shell:true", () => {
-    const { runner, calls } = makeRunner([{ status: 0 }]);
-    openBrowserSync("http://x", "win32", runner);
-
-    expect(calls[0].cmd).toBe("cmd");
-    expect(calls[0].args).toEqual(["/c", "start", "", "http://x"]);
-    expect(calls[0].opts).not.toHaveProperty("shell", true);
-  });
-
-  test("linux: xdg-open status=0 → sensible-browser is NOT called", () => {
-    const { runner, calls } = makeRunner([{ status: 0 }]);
-    const r = openBrowserSync("http://x", "linux", runner);
-
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.method).toBe("xdg-open");
-    expect(calls.map(c => c.cmd)).toEqual(["xdg-open"]);
-  });
-
-  test("linux: xdg-open status!=0 → sensible-browser fallback fires", () => {
-    const { runner, calls } = makeRunner([
-      { status: 3 },
-      { status: 0 },
-    ]);
-    const r = openBrowserSync("http://x", "linux", runner);
-
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.method).toBe("sensible-browser");
-    expect(calls.map(c => c.cmd)).toEqual(["xdg-open", "sensible-browser"]);
-  });
-
-  test("linux: xdg-open killed by signal (status=null + error) → fallback fires", () => {
-    // The pre-fix bug: status===null was treated as success. Verify both
-    // signal-kill and ENOENT trigger the fallback.
-    const { runner, calls } = makeRunner([
-      { status: null, error: new Error("Killed by signal") },
-      { status: 0 },
-    ]);
-    const r = openBrowserSync("http://x", "linux", runner);
-
-    expect(r.ok).toBe(true);
-    expect(calls.map(c => c.cmd)).toEqual(["xdg-open", "sensible-browser"]);
-  });
-
-  test("linux: both xdg-open and sensible-browser fail → ok=false with reason", () => {
-    const { runner } = makeRunner([
-      { status: 1, error: new Error("ENOENT xdg-open") },
-      { status: 1, error: new Error("ENOENT sensible-browser") },
-    ]);
-    const r = openBrowserSync("http://x", "linux", runner);
-
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.method).toBe("none");
-      expect(r.reason).toContain("xdg-open");
-      expect(r.reason).toContain("sensible-browser");
-    }
-  });
-
-  test("runner throws synchronously → caught, surfaced in reason", () => {
-    const runner: SpawnSyncFn = () => { throw new Error("EMFILE"); };
-    const r = openBrowserSync("http://x", "darwin", runner);
-
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toContain("EMFILE");
-  });
-});
-
-describe("killProcessOnPort — Linux/macOS (lsof)", () => {
-  test("port free (lsof status=1, empty stdout) → no kill, no error", () => {
-    const { runner, calls } = makeRunner([
-      { status: 1, stdout: "" },
-    ]);
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(r.killedPids).toEqual([]);
-    expect(r.attemptedPids).toEqual([]);
-    expect(r.errors).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].cmd).toBe("lsof");
-    expect(calls[0].args).toEqual(["-ti", ":4747"]);
-  });
-
-  test("lsof ENOENT (binary missing) → surfaced as error, no kill attempt", () => {
-    const { runner, calls } = makeRunner([
-      { status: null, error: new Error("ENOENT") },
-    ]);
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(r.attemptedPids).toEqual([]);
-    expect(r.errors.join(" ")).toMatch(/lsof.*ENOENT/);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("two pids, both kill cleanly → both reported as killed", () => {
-    const { runner, calls } = makeRunner([
-      { status: 0, stdout: "1234\n5678\n" },
-      { status: 0 },
-      { status: 0 },
-    ]);
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(r.killedPids).toEqual(["1234", "5678"]);
-    expect(r.attemptedPids).toEqual(["1234", "5678"]);
-    expect(r.errors).toEqual([]);
-
-    // Argv check: each kill receives the pid as a single argv entry.
-    expect(calls[1]).toEqual(expect.objectContaining({ cmd: "kill", args: ["1234"] }));
-    expect(calls[2]).toEqual(expect.objectContaining({ cmd: "kill", args: ["5678"] }));
-  });
-
-  test("first pid kill fails → second pid still attempted (no abort)", () => {
-    // Pre-fix: try/catch wrapped the entire for-loop, so a single pid
-    // failure aborted the rest of the kills.
-    const { runner } = makeRunner([
-      { status: 0, stdout: "1111\n2222\n3333\n" },
-      { status: 1, error: new Error("EPERM") },
-      { status: 0 },
-      { status: 0 },
-    ]);
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(r.attemptedPids).toEqual(["1111", "2222", "3333"]);
-    expect(r.killedPids).toEqual(["2222", "3333"]);
-    expect(r.errors.join(" ")).toMatch(/kill 1111/);
-  });
-
-  test("runner throws on a kill → loop continues, error captured", () => {
-    let calls = 0;
-    const runner: SpawnSyncFn = (cmd, args) => {
-      calls++;
-      if (cmd === "lsof") {
-        return { pid: 0, output: [], stdout: "1\n2\n", stderr: "", status: 0, signal: null } as ReturnType<SpawnSyncFn>;
-      }
-      if (cmd === "kill" && args[0] === "1") throw new Error("boom");
-      return { pid: 0, output: [], stdout: "", stderr: "", status: 0, signal: null } as ReturnType<SpawnSyncFn>;
-    };
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(calls).toBe(3);
-    expect(r.attemptedPids).toEqual(["1", "2"]);
-    expect(r.killedPids).toEqual(["2"]);
-    expect(r.errors.join(" ")).toMatch(/boom/);
-  });
-
-  test("garbage in lsof stdout is filtered (only digit-PIDs accepted)", () => {
-    const { runner, calls } = makeRunner([
-      { status: 0, stdout: "1234\n\nNot-a-pid\n5678\n" },
-      { status: 0 },
-      { status: 0 },
-    ]);
-    const r = killProcessOnPort(4747, "linux", runner);
-
-    expect(r.killedPids).toEqual(["1234", "5678"]);
-    expect(calls).toHaveLength(3); // lsof + 2 kills
-  });
-});
-
-describe("killProcessOnPort — Windows (netstat)", () => {
-  // Sample netstat -ano output. The MUST-NOT-KILL row's REMOTE column
-  // contains :4747 — pre-fix `line.includes(":4747")` matched it and killed
-  // the unrelated PID 9876.
-  const netstatOut = [
-    "Active Connections",
-    "",
-    "  Proto  Local Address          Foreign Address        State           PID",
-    "  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       1234",
-    "  TCP    192.168.1.5:54321      8.8.8.8:4747           ESTABLISHED     9876", // MUST NOT match
-    "  UDP    0.0.0.0:4747           *:*                                    5555", // UDP, must not match
-    "  TCP    [::]:4747              [::]:0                 LISTENING       1235",
-    "",
-  ].join("\r\n");
-
-  test("only LISTENING TCP rows whose LOCAL column ends with :port are killed", () => {
-    const { runner, calls } = makeRunner([
-      { status: 0, stdout: netstatOut },
-      { status: 0 }, // taskkill 1234
-      { status: 0 }, // taskkill 1235
-    ]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.attemptedPids).toEqual(expect.arrayContaining(["1234", "1235"]));
-    expect(r.attemptedPids).not.toContain("9876"); // remote-port match — was the bug
-    expect(r.attemptedPids).not.toContain("5555"); // UDP — must not be killed
-
-    // taskkill argv: /F /PID <pid> with no shell:true
-    const killCalls = calls.filter(c => c.cmd === "taskkill");
-    for (const c of killCalls) {
-      expect(c.args[0]).toBe("/F");
-      expect(c.args[1]).toBe("/PID");
-      expect(c.opts).not.toHaveProperty("shell", true);
-    }
-  });
-
-  test("netstat ENOENT → surfaced as error", () => {
-    const { runner } = makeRunner([
-      { status: null, error: new Error("ENOENT") },
-    ]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.errors.join(" ")).toMatch(/netstat.*ENOENT/);
-    expect(r.attemptedPids).toEqual([]);
-  });
-
-  test("first taskkill fails → second pid still attempted", () => {
-    const { runner } = makeRunner([
-      { status: 0, stdout: netstatOut },
-      { status: 1, error: new Error("Access denied") }, // taskkill 1234
-      { status: 0 }, // taskkill 1235
-    ]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.attemptedPids).toContain("1234");
-    expect(r.attemptedPids).toContain("1235");
-    expect(r.killedPids).toContain("1235");
-    expect(r.killedPids).not.toContain("1234");
-    expect(r.errors.join(" ")).toMatch(/taskkill 1234/);
-  });
-});
-
-describe("killProcessOnPort — input validation", () => {
-  test("rejects out-of-range port without spawning anything", () => {
-    const spy = vi.fn();
-    const r = killProcessOnPort(70000, "linux", spy as unknown as SpawnSyncFn);
-
-    expect(spy).not.toHaveBeenCalled();
-    expect(r.errors.join(" ")).toMatch(/invalid port/);
-  });
-
-  test("rejects non-integer port without spawning anything", () => {
-    const spy = vi.fn();
-    const r = killProcessOnPort(3.14 as number, "linux", spy as unknown as SpawnSyncFn);
-
-    expect(spy).not.toHaveBeenCalled();
-    expect(r.errors.join(" ")).toMatch(/invalid port/);
-  });
-});
-
-// ─── ctx_insight helper follow-ups (#441 follow-up) ──────────────────────────
-//
-// 1. Hard timeout on every helper-internal spawnSync. A hung lsof/xdg-open/
-//    taskkill would otherwise block the MCP tool indefinitely. We assert the
-//    timeout option is propagated to the runner — the actual cap value is an
-//    implementation detail, but its presence is the regression we lock.
-//
-// 2. Windows non-English locale support. The pre-followup parser keyed off
-//    `state !== "LISTENING"` which is locale-translated (Windows-FR shows
-//    `À l'écoute`, Windows-DE `ABHÖREN`, Windows-ES `ESCUCHANDO`, etc.), so
-//    on non-EN Windows the helper would silently match zero rows and never
-//    free a stuck dashboard port. The remote-address column is NOT
-//    locale-translated; we now key off it instead.
-
-describe("Helper spawnSync timeout (#441 follow-up)", () => {
-  test("openBrowserSync passes a timeout to the runner", () => {
-    const { runner, calls } = makeRunner([{ status: 0 }]);
-    openBrowserSync("http://x", "darwin", runner);
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].opts).toBeDefined();
-    expect(typeof (calls[0].opts as { timeout?: number }).timeout).toBe("number");
-    expect((calls[0].opts as { timeout: number }).timeout).toBeGreaterThan(0);
-  });
-
-  test("killProcessOnPort (Linux) passes a timeout to lsof and kill", () => {
-    const { runner, calls } = makeRunner([
-      { status: 0, stdout: "1234\n" },
-      { status: 0 }, // kill 1234
-    ]);
-    killProcessOnPort(4747, "linux", runner);
-
-    expect(calls).toHaveLength(2);
-    for (const c of calls) {
-      expect(typeof (c.opts as { timeout?: number }).timeout).toBe("number");
-      expect((c.opts as { timeout: number }).timeout).toBeGreaterThan(0);
-    }
-  });
-
-  test("killProcessOnPort (Windows) passes a timeout to netstat and taskkill", () => {
-    const winFixture = [
-      "  Proto  Local Address          Foreign Address        State           PID",
-      "  TCP    0.0.0.0:4747           0.0.0.0:0              LISTENING       1234",
-      "",
-    ].join("\r\n");
-    const { runner, calls } = makeRunner([
-      { status: 0, stdout: winFixture },
-      { status: 0 }, // taskkill 1234
-    ]);
-    killProcessOnPort(4747, "win32", runner);
-
-    expect(calls.map(c => c.cmd)).toEqual(["netstat", "taskkill"]);
-    for (const c of calls) {
-      expect(typeof (c.opts as { timeout?: number }).timeout).toBe("number");
-      expect((c.opts as { timeout: number }).timeout).toBeGreaterThan(0);
-    }
-  });
-});
-
-describe("killProcessOnPort — Windows non-English locale (#441 follow-up)", () => {
-  // Same regression fixture as the en-US Windows test, but with the STATE
-  // column translated. Pre-followup, the helper required `state === "LISTENING"`
-  // and so silently produced zero PIDs on non-EN Windows. The follow-up keys
-  // off the remote-address column (locale-independent) so this fixture must
-  // now match LISTENING rows 1234 + 1235 and skip the ESTABLISHED row 9876
-  // and the UDP row 5555.
-  const netstatFr = [
-    "Connexions actives",
-    "",
-    "  Proto  Adresse locale         Adresse distante       État            PID",
-    "  TCP    0.0.0.0:4747           0.0.0.0:0              À l'écoute      1234",
-    "  TCP    192.168.1.5:54321      8.8.8.8:4747           ESTABLI         9876",
-    "  UDP    0.0.0.0:4747           *:*                                    5555",
-    "  TCP    [::]:4747              [::]:0                 À l'écoute      1235",
-    "",
-  ].join("\r\n");
-
-  const netstatDe = [
-    "Aktive Verbindungen",
-    "",
-    "  Proto  Lokale Adresse         Remoteadresse          Status          PID",
-    "  TCP    0.0.0.0:4747           0.0.0.0:0              ABHÖREN         1234",
-    "  TCP    192.168.1.5:54321      8.8.8.8:4747           HERGESTELLT     9876",
-    "  TCP    [::]:4747              [::]:0                 ABHÖREN         1235",
-    "",
-  ].join("\r\n");
-
-  test("French Windows netstat output: kills 1234 and 1235, ignores 9876 + 5555", () => {
-    const { runner } = makeRunner([
-      { status: 0, stdout: netstatFr },
-      { status: 0 }, // taskkill 1234
-      { status: 0 }, // taskkill 1235
-    ]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.attemptedPids).toEqual(expect.arrayContaining(["1234", "1235"]));
-    expect(r.attemptedPids).not.toContain("9876");
-    expect(r.attemptedPids).not.toContain("5555");
-    expect(r.killedPids).toEqual(expect.arrayContaining(["1234", "1235"]));
-  });
-
-  test("German Windows netstat output: kills 1234 and 1235, ignores 9876", () => {
-    const { runner } = makeRunner([
-      { status: 0, stdout: netstatDe },
-      { status: 0 }, // taskkill 1234
-      { status: 0 }, // taskkill 1235
-    ]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.attemptedPids).toEqual(expect.arrayContaining(["1234", "1235"]));
-    expect(r.attemptedPids).not.toContain("9876");
-    expect(r.killedPids).toEqual(expect.arrayContaining(["1234", "1235"]));
-  });
-
-  test("a connected remote :port still does NOT match (remote-column anchor)", () => {
-    // Sanity: the predicate must still reject the ESTABLISHED row whose
-    // REMOTE is 8.8.8.8:4747. This was the original pre-#441 bug; the
-    // follow-up must not regress it while changing the locale strategy.
-    const onlyEstablished = [
-      "  Proto  Local Address          Foreign Address        State           PID",
-      "  TCP    192.168.1.5:54321      8.8.8.8:4747           ESTABLISHED     9876",
-      "",
-    ].join("\r\n");
-    const { runner, calls } = makeRunner([{ status: 0, stdout: onlyEstablished }]);
-    const r = killProcessOnPort(4747, "win32", runner);
-
-    expect(r.attemptedPids).toEqual([]);
-    expect(calls).toHaveLength(1); // netstat only — no taskkill issued
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Prose-style policy (issue #482)
-// ═══════════════════════════════════════════════════════════════════════════
-// Decision: context-mode keeps raw data out of context but does not dictate
-// how the model writes its final answer. Aggressive brevity prompts have been
-// shown to degrade coding/reasoning benchmarks (Moonshot AI on kimi-k2.5).
-// Any caveman/terse-style language in shipped artifacts is a regression.
 
 describe("prose-style policy (#482)", () => {
   const serverSrc = readFileSync(
@@ -5333,14 +4121,9 @@ describe("tool description style contract (#683 ADR-0002)", () => {
   // - ctx_stats / ctx_doctor / ctx_insight: minimal one-line descriptions by
   //   design — diagnostic/GUI affordances, not routing targets. Audit row:
   //   "NIT — Clean, minimal, no change."
-  // - ctx_upgrade: MUST is appropriate here (post-call obligation on the
-  //   agent to run the returned shell command). Audit row: "LOW — MUST is
-  //   appropriate here (post-call obligation), good use case. No change."
   const EXEMPT_FROM_WHEN = new Set([
     "ctx_stats",
     "ctx_doctor",
-    "ctx_insight",
-    "ctx_upgrade",
   ]);
 
   // ctx_purge carve-out — the rewrite (PR #683 WS2) preserves the
@@ -5353,9 +4136,9 @@ describe("tool description style contract (#683 ADR-0002)", () => {
   // meets the canonical contract enforced below.
   const EXEMPT_FROM_FORBIDDEN_TOKENS = new Set<string>([]);
 
-  test("at least 11 ctx_* tools are registered", () => {
+  test("at least 8 ctx_* tools are registered", () => {
     // Sanity check that the extractor found the corpus.
-    expect(tools.length).toBeGreaterThanOrEqual(11);
+    expect(tools.length).toBeGreaterThanOrEqual(8);
   });
 
   // Forbidden tokens per ADR-0002. Each pattern is documented inline so
@@ -5792,11 +4575,9 @@ describe("hook routing prompt-surface contract (#683 ADR-0002 + ADR-0003)", () =
 
     const caseAs = extractCaseAStrings(routingMjs);
 
-    test("at least 4 CASE A redirect strings present (sanity check on extractor)", () => {
-      // Current corpus: L707 curl/wget, L738 inline HTTP, L751 build tools,
-      // L804 WebFetch. If a contributor removes one, the count drops and
-      // this sanity check forces the test author to revisit the extractor.
-      expect(caseAs.length).toBeGreaterThanOrEqual(4);
+    test("at least 3 CASE A redirect strings present (sanity check on extractor)", () => {
+      // Current corpus: curl/wget, inline HTTP, build tools. WebFetch is not redirected.
+      expect(caseAs.length).toBeGreaterThanOrEqual(3);
     });
 
     for (const cs of caseAs) {
@@ -5930,12 +4711,10 @@ describe("tool description source form contract (#683 PR follow-up)", () => {
   const SHORT_DESCRIPTION_EXEMPT = new Set([
     "ctx_stats",
     "ctx_doctor",
-    "ctx_upgrade",
-    "ctx_insight",
   ]);
 
-  test("at least 11 ctx_* tools surfaced for source-form contract", () => {
-    expect(blocks.length).toBeGreaterThanOrEqual(11);
+  test("at least 8 ctx_* tools surfaced for source-form contract", () => {
+    expect(blocks.length).toBeGreaterThanOrEqual(8);
   });
 
   for (const block of blocks) {
@@ -6260,49 +5039,6 @@ describe("ctx_index: root-level symlink defense in directory dispatch", () => {
   });
 });
 
-describe("ctx_fetch_and_index: response body size cap", () => {
-  // ctx_fetch_and_index spawns a subprocess that fetches a URL, writes the
-  // response body to a tmpfile, exits, and the parent reads the file back
-  // into the long-running MCP server's heap via readFileSync. Without a
-  // cap, an unexpectedly large endpoint (or a slowloris that keeps
-  // appending chunks until the subprocess is killed) can either OOM the
-  // subprocess or, worse, propagate a multi-GB response into the parent
-  // heap and crash the MCP server. Cap to 50 MB on both ends.
-
-  const SERVER_SOURCE = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-
-  test("subprocess buildFetchCode caps response via Content-Length and post-text length", () => {
-    expect(SERVER_SOURCE).toContain("const MAX_FETCH_BYTES = 50 * 1024 * 1024;");
-    expect(SERVER_SOURCE).toContain("async function safeText(resp)");
-    // The three response paths (JSON, HTML, default) all route through safeText
-    // instead of resp.text() directly.
-    const buildFetchSrc = SERVER_SOURCE.slice(
-      SERVER_SOURCE.indexOf("export function buildFetchCode"),
-      SERVER_SOURCE.indexOf("// fetch_and_index helpers"),
-    );
-    expect(buildFetchSrc.length).toBeGreaterThan(0);
-    expect(buildFetchSrc.match(/await safeText\(resp\)/g)?.length).toBeGreaterThanOrEqual(3);
-    // The pre-fix call sites (one per content-type branch) routed through
-    // `await resp.text()` directly. Now only one such call survives,
-    // inside safeText itself. Count exactly one.
-    const directCalls = buildFetchSrc.match(/await resp\.text\(\)/g) ?? [];
-    expect(directCalls.length).toBe(1);
-  });
-
-  test("parent-side fetchOneUrl stat-gates outputPath before readFileSync", () => {
-    const fetchOneUrlSrc = SERVER_SOURCE.slice(
-      SERVER_SOURCE.indexOf("async function fetchOneUrl"),
-      SERVER_SOURCE.indexOf("async function fetchOneUrl") + 6000,
-    );
-    expect(fetchOneUrlSrc).toContain("MAX_FETCH_OUTPUT_BYTES = 50 * 1024 * 1024");
-    expect(fetchOneUrlSrc).toMatch(/statSync\(outputPath\)\.size/);
-    expect(fetchOneUrlSrc).toMatch(/fileSize > MAX_FETCH_OUTPUT_BYTES/);
-  });
-});
-
 describe("getStatsFilePath: sanitize CLAUDE_SESSION_ID before path.join", () => {
   // CLAUDE_SESSION_ID flows from the hosting process straight into a
   // path.join, and path.join collapses ".." segments. CLAUDE_SESSION_ID=
@@ -6359,25 +5095,6 @@ describe("getStatsFilePath: sanitize CLAUDE_SESSION_ID before path.join", () => 
 // ═══════════════════════════════════════════════════════════════════════════
 // Cross-platform audit follow-up — schema/observability fixes for #696 #697
 // ═══════════════════════════════════════════════════════════════════════════
-
-describe("ctx_insight schema description (issue #697)", () => {
-  const serverSrc = readFileSync(
-    resolve(__dirname, "../../src/server.ts"),
-    "utf-8",
-  );
-
-  test("description states it is a dashboard launcher, not a Q&A engine", () => {
-    expect(serverSrc).toMatch(/ctx_insight[\s\S]{0,2000}dashboard launcher/);
-  });
-
-  test("description redirects natural-language queries to ctx_search", () => {
-    expect(serverSrc).toMatch(/ctx_insight[\s\S]{0,2000}use ctx_search/);
-  });
-
-  test("description preserves the original analytics framing", () => {
-    expect(serverSrc).toMatch(/Opens the context-mode Insight dashboard/);
-  });
-});
 
 describe("ctx_batch_execute query_scope (issue #696)", () => {
   const serverSrc = readFileSync(
@@ -6677,13 +5394,10 @@ describe("ctx_* MCP tool annotations (#846)", () => {
     ctx_execute_file:    { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: true  },
     ctx_index:           { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     ctx_search:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
-    ctx_fetch_and_index: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true  },
     ctx_batch_execute:   { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: true  },
     ctx_stats:           { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
     ctx_doctor:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
-    ctx_upgrade:         { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: false },
     ctx_purge:           { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false },
-    ctx_insight:         { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true  },
   };
   const tools = REGISTERED_CTX_TOOLS as Array<{ name: string; config: { annotations?: Hints } }>;
   const find = (name: string) => tools.find((t) => t.name === name);
@@ -6710,9 +5424,21 @@ describe("ctx_* MCP tool annotations (#846)", () => {
   test("never blanket-marks executing/mutating/destructive tools read-only", () => {
     for (const name of [
       "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index",
-      "ctx_fetch_and_index", "ctx_purge", "ctx_upgrade", "ctx_insight",
+      "ctx_purge",
     ]) {
       expect(find(name)!.config.annotations!.readOnlyHint).toBe(false);
     }
+  });
+});
+
+describe("offline tool registry", () => {
+  test("registers no network tools", () => {
+    const serverSrc = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/server.ts"),
+      "utf8",
+    );
+    const names = [...serverSrc.matchAll(/server\.registerTool\(\s*"([^"]+)"/g)].map((m) => m[1]);
+    const banned = ["ctx_upgrade", "ctx_insight", "ctx_fetch_and_index"];
+    expect(banned.filter((name) => names.includes(name))).toEqual([]);
   });
 });

@@ -56,21 +56,10 @@ describe("start.mjs MCP boot path", () => {
     ).not.toMatch(/execSync\([^)]{0,200}npm\s+install/);
   });
 
-  it("installs the fetch-and-index deps in the background via `spawn(..., { detached, unref })`", () => {
-    // Positive assertion — the detached spawn path is what keeps boot
-    // fast for codex marketplace installs (no `node_modules/`).
-    expect(START_MJS).toMatch(/spawn\(\s*NPM_BIN/);
-    expect(START_MJS).toMatch(/detached:\s*true/);
-    expect(START_MJS).toMatch(/\.unref\(\)/);
-
-    // The three packages must still be enumerated — dropping one would
-    // mean `ctx_fetch_and_index` silently breaks on codex/marketplace
-    // installs with no recovery path.
+  it("does not background-install fetch dependencies", () => {
+    expect(START_MJS).not.toMatch(/NPM_INSTALL_BG_PKGS/);
     for (const pkg of ["turndown", "turndown-plugin-gfm", "@mixmark-io/domino"]) {
-      expect(
-        START_MJS,
-        `start.mjs must still kick off a background \`npm install ${pkg}\``,
-      ).toContain(`"${pkg}"`);
+      expect(START_MJS).not.toContain(`"${pkg}"`);
     }
   });
 });

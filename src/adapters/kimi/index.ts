@@ -89,7 +89,7 @@ interface KimiTomlHook {
 // names + external MCP catch-all literal. Same charset-clean restriction
 // as Codex (Rust regex, no look-around).
 const PRE_TOOL_USE_MATCHER_PATTERN =
-  "Bash|Shell|Read|Edit|Write|WebFetch|Agent|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__";
+  "Bash|Shell|Read|Edit|Write|WebFetch|Agent|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_search|ctx_search|ctx_index|mcp__";
 
 const KIMI_HOOK_COMMANDS = {
   PreToolUse: "context-mode hook kimi pretooluse",

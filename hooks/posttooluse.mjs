@@ -179,7 +179,7 @@ await runHook(async () => {
     } catch { /* latency tracking is best-effort */ }
 
     // ─── Retrieval bridge: emit the "With context-mode" (bytes_retrieved) row ───
-    // The MCP server appended ctx_search / ctx_fetch_and_index response bytes to
+    // The MCP server appended ctx_search / ctx_search response bytes to
     // a marker keyed by the session DB basename (the hook NEVER fires for the
     // plugin's own MCP tools, so this is the only place that signal can enter
     // the forward stream). Consume + emit one forwardable event so the platform

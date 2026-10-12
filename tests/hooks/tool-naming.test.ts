@@ -182,7 +182,7 @@ describe("createRoutingBlock", () => {
     expect(block).toContain("mcp__context-mode__ctx_batch_execute");
     expect(block).toContain("mcp__context-mode__ctx_search");
     expect(block).toContain("mcp__context-mode__ctx_execute");
-    expect(block).toContain("mcp__context-mode__ctx_fetch_and_index");
+    expect(block).not.toContain("ctx_fetch_and_index");
     // Must NOT contain claude-code prefix
     expect(block).not.toContain("mcp__plugin_context-mode_context-mode__");
   });
@@ -226,24 +226,21 @@ describe("createExternalMcpGuidance (#529)", () => {
     const t = createToolNamer("kiro");
     const guidance = createExternalMcpGuidance(t);
     expect(guidance).toContain("@context-mode/ctx_execute");
-    expect(guidance).toContain("@context-mode/ctx_fetch_and_index");
-    expect(guidance).toContain("@context-mode/ctx_search");
+    expect(guidance).toContain("no network access");
   });
 
   it("uses opencode-style tool names for opencode platform", () => {
     const t = createToolNamer("opencode");
     const guidance = createExternalMcpGuidance(t);
     expect(guidance).toContain("context-mode_ctx_execute");
-    expect(guidance).toContain("context-mode_ctx_fetch_and_index");
-    expect(guidance).toContain("context-mode_ctx_search");
+    expect(guidance).toContain("no network access");
   });
 
   it("uses zed-style tool names for zed platform", () => {
     const t = createToolNamer("zed");
     const guidance = createExternalMcpGuidance(t);
     expect(guidance).toContain("mcp:context-mode:ctx_execute");
-    expect(guidance).toContain("mcp:context-mode:ctx_fetch_and_index");
-    expect(guidance).toContain("mcp:context-mode:ctx_search");
+    expect(guidance).toContain("no network access");
   });
 
   it("mentions the routing intent so the model knows what to do", () => {
@@ -253,8 +250,7 @@ describe("createExternalMcpGuidance (#529)", () => {
     expect(guidance).toContain("External MCP tools");
     // Points to the right tools — losing any of these defeats the guidance
     expect(guidance).toMatch(/ctx_execute/);
-    expect(guidance).toMatch(/ctx_fetch_and_index/);
-    expect(guidance).toMatch(/ctx_search/);
+    expect(guidance).toContain("no network access");
   });
 });
 
@@ -294,12 +290,7 @@ describe("backward compat static exports", () => {
     expect(EXTERNAL_MCP_GUIDANCE).toContain(
       "mcp__plugin_context-mode_context-mode__ctx_execute",
     );
-    expect(EXTERNAL_MCP_GUIDANCE).toContain(
-      "mcp__plugin_context-mode_context-mode__ctx_fetch_and_index",
-    );
-    expect(EXTERNAL_MCP_GUIDANCE).toContain(
-      "mcp__plugin_context-mode_context-mode__ctx_search",
-    );
+    expect(EXTERNAL_MCP_GUIDANCE).toContain("no network access");
     // Drift guard: the static export must equal the factory output with the
     // default (claude-code) namer — they share a single template.
     const claudeCodeT = createToolNamer("claude-code");
@@ -317,8 +308,8 @@ describe("routePreToolUse with platform parameter", () => {
     expect(result).not.toBeNull();
     expect(result!.action).toBe("modify");
     const cmd = (result!.updatedInput as Record<string, string>).command;
-    expect(cmd).toContain("mcp__context-mode__ctx_fetch_and_index");
     expect(cmd).toContain("mcp__context-mode__ctx_execute");
+    expect(cmd).toContain("no network access");
     expect(cmd).not.toContain("mcp__plugin_context-mode_context-mode__");
   });
 
@@ -326,7 +317,8 @@ describe("routePreToolUse with platform parameter", () => {
     const result = routePreToolUse("Bash", { command: "curl https://example.com" }, "/tmp");
     expect(result).not.toBeNull();
     const cmd = (result!.updatedInput as Record<string, string>).command;
-    expect(cmd).toContain("mcp__plugin_context-mode_context-mode__ctx_fetch_and_index");
+    expect(cmd).toContain("mcp__plugin_context-mode_context-mode__ctx_execute");
+    expect(cmd).toContain("no network access");
   });
 
   it("inline HTTP block uses cursor bare names when platform=cursor", () => {
@@ -344,12 +336,9 @@ describe("routePreToolUse with platform parameter", () => {
     expect(cmd).not.toContain("mcp__");
   });
 
-  it("WebFetch deny uses kiro tool names when platform=kiro", () => {
+  it("WebFetch passes through on kiro", () => {
     const result = routePreToolUse("WebFetch", { url: "https://example.com" }, "/tmp", "kiro");
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe("deny");
-    expect(result!.reason).toContain("@context-mode/ctx_fetch_and_index");
-    expect(result!.reason).toContain("@context-mode/ctx_search");
+    expect(result == null || result.action !== "deny").toBe(true);
   });
 
   it("Task is no longer routed — returns null (#241)", () => {
@@ -442,16 +431,14 @@ describe("routePreToolUse with platform parameter", () => {
       );
     });
 
-    it("web_fetch routes as WebFetch → deny", () => {
+    it("web_fetch routes as WebFetch and passes through", () => {
       const result = routePreToolUse(
         "web_fetch",
         { url: "https://example.com" },
         "/tmp",
         "qwen-code",
       );
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("WebFetch redirected");
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
     it("read_file routes as Read → context guidance", () => {

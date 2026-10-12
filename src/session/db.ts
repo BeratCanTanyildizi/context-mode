@@ -1485,10 +1485,8 @@ export class SessionDB extends SQLiteBase {
    * Session rollup snapshot — 12 aggregate fields the analytics platform
    * stamps onto every outgoing event row (seed.ts shape parity).
    *
-   * Called from session-loaders BEFORE `maybeForward`; the snapshot is
-   * computed against the LOCAL SessionDB and threaded into the canonical
-   * event so the platform-side Zod schema receives the rich shape without
-   * the bridge ever hand-mapping fields (PRD §5.4 ABI passthrough).
+   * Computed against the LOCAL SessionDB. Callers that only need the
+   * aggregates read this snapshot; nothing is sent off the machine.
    *
    * Returns zeroed defaults for unknown sessions — callers MUST tolerate
    * a snapshot from an empty session (first event into a fresh DB).

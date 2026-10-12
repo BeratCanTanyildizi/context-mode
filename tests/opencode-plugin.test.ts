@@ -93,13 +93,10 @@ describe("ContextModePlugin", () => {
         "ctx_doctor",
         "ctx_execute",
         "ctx_execute_file",
-        "ctx_fetch_and_index",
         "ctx_index",
-        "ctx_insight",
         "ctx_purge",
         "ctx_search",
         "ctx_stats",
-        "ctx_upgrade",
       ]);
     });
 

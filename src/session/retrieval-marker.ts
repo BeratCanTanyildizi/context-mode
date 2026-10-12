@@ -2,7 +2,7 @@
  * Server→hook bridge for the retrieval ("With context-mode") byte count.
  *
  * WHY THIS EXISTS — context-mode's OWN MCP retrieval tools (ctx_search /
- * ctx_fetch_and_index) never fire a PostToolUse hook for the plugin's own
+ * ctx_search) never fire a PostToolUse hook for the plugin's own
  * server, so the hook-side `extractMcpToolCall` path can never observe them
  * (verified empirically: 0 `mcp_tool_call` events locally, bytes_retrieved
  * 0/124454 in production D1). The MCP server, however, measures each

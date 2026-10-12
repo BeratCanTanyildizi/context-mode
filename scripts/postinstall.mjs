@@ -345,7 +345,7 @@ try { healBetterSqlite3Binding(pkgRoot); } catch { /* best effort — don't bloc
 // (before any MCP server has run).
 //
 // Guard 1: only run on REAL `npm install -g context-mode`. A contributor's
-// `npm install` from a git clone (or CI checkout) must NOT mutate the
+// `npm install` from a source checkout (or CI checkout) must NOT mutate the
 // source-tracked `.claude-plugin/plugin.json` — doing so substitutes the
 // literal `${CLAUDE_PLUGIN_ROOT}` with an absolute path and trips
 // `scripts/assert-asymmetric-drift.mjs` (Issue #531) in the build chain.

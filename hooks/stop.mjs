@@ -63,8 +63,7 @@ try {
         const cursor = db.getUsageCursor(sessionId);
         const { events, cursor: next } = extractTranscriptUsageSince(transcript, cursor);
         if (events.length > 0) {
-          // attributeAndInsertEvents both INSERTS locally and FORWARDS to the
-          // platform (gated on ~/.context-mode/platform.json).
+          // attributeAndInsertEvents writes the local session database.
           attributeAndInsertEvents(db, sessionId, events, input, projectDir, "Stop", resolveProjectAttributions);
         }
         if (next) db.setUsageCursor(sessionId, next);

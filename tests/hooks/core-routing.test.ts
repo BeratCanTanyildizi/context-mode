@@ -93,7 +93,7 @@ describe("routePreToolUse", () => {
       const cmd = (result!.updatedInput as Record<string, string>).command;
       expect(cmd).toContain("curl/wget redirected");
       expect(cmd).not.toContain("curl/wget blocked");
-      expect(cmd).toMatch(/retry/i);
+      expect(cmd).toContain("no network access");
     });
 
     it("denies Codex exec_command cmd payloads like Bash command payloads", () => {
@@ -215,7 +215,7 @@ describe("routePreToolUse", () => {
       const cmd = (result!.updatedInput as Record<string, string>).command;
       expect(cmd).toContain("Inline HTTP redirected");
       expect(cmd).not.toContain("Inline HTTP blocked");
-      expect(cmd).toMatch(/retry/i);
+      expect(cmd).toContain("no network access");
     });
 
     it("denies requests.get() with modify action", () => {
@@ -372,64 +372,33 @@ describe("routePreToolUse", () => {
   // ─── WebFetch routing ──────────────────────────────────
 
   describe("WebFetch tool", () => {
-    it("returns deny action with redirect message", () => {
+    it("passes WebFetch through", () => {
       const result = routePreToolUse("WebFetch", {
         url: "https://docs.example.com",
         prompt: "Get the docs",
       });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      // PR #654 substitute: imperative-positive framing, no "blocked" wording,
-      // explicit retry hint to keep Haiku-tier agents from capitulating to
-      // training data on transient DNS errors (audit Probe 3).
-      expect(result!.reason).toContain("WebFetch redirected");
-      expect(result!.reason).not.toContain("WebFetch blocked");
-      expect(result!.reason).toContain("fetch_and_index");
-      expect(result!.reason).toMatch(/retry/i);
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
-    it("includes the URL in deny reason", () => {
-      const url = "https://api.github.com/repos/test";
-      const result = routePreToolUse("WebFetch", { url });
-      expect(result).not.toBeNull();
-      expect(result!.reason).toContain(url);
-    });
-
-    it("treats agy read_url_content URL payloads as WebFetch", () => {
-      const url = "https://example.com/docs";
+    it("passes read_url_content through", () => {
       const result = routePreToolUse(
         "read_url_content",
-        { URL: url },
+        { URL: "https://example.com/docs" },
         undefined,
         "antigravity-cli",
         "agy-read-url",
       );
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain(url);
-      // agy's call surface is context-mode/<tool> (see hooks/core/tool-naming.mjs),
-      // not Claude's mcp__context-mode__<tool> form.
-      expect(result!.reason).toContain("context-mode/ctx_fetch_and_index");
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
-    it("treats mcp_web_fetch as WebFetch and blocks it", () => {
-      const url = "https://example.com";
-      const result = routePreToolUse("mcp_web_fetch", { url });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("WebFetch redirected");
-      expect(result!.reason).toContain("fetch_and_index");
-      expect(result!.reason).toContain("ctx_search");
+    it("passes mcp_web_fetch through", () => {
+      const result = routePreToolUse("mcp_web_fetch", { url: "https://example.com" });
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
-    it("treats mcp_fetch_tool as WebFetch and blocks it", () => {
-      const url = "https://example.com";
-      const result = routePreToolUse("mcp_fetch_tool", { url });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("WebFetch redirected");
-      expect(result!.reason).toContain("fetch_and_index");
-      expect(result!.reason).toContain("ctx_search");
+    it("passes mcp_fetch_tool through", () => {
+      const result = routePreToolUse("mcp_fetch_tool", { url: "https://example.com" });
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
     it("allows WebFetch when MCP server not ready (#230)", () => {
@@ -457,7 +426,7 @@ describe("routePreToolUse", () => {
       expect(result).toBeNull();
     });
 
-    it("keeps WebFetch redirected when options are omitted", () => {
+    it("passes WebFetch through when options are omitted", () => {
       const result = routePreToolUse(
         "WebFetch",
         { url: "https://example.com" },
@@ -465,20 +434,17 @@ describe("routePreToolUse", () => {
         "claude-code",
         "main-webfetch-default-options",
       );
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("ctx_fetch_and_index");
+      expect(result == null || result.action !== "deny").toBe(true);
     });
 
-    it("Claude Code pretooluse treats subagent hook payloads as ctx_* unavailable (#794)", async () => {
+    it("Claude Code pretooluse lets WebFetch through for the main session", async () => {
       const main = await spawnPreToolUseHook({
         tool_name: "WebFetch",
         tool_input: { url: "https://example.com" },
         session_id: "core-routing-main-webfetch",
       });
       expect(main.status).toBe(0);
-      expect(main.parsed?.hookSpecificOutput?.permissionDecision).toBe("deny");
-      expect(main.parsed?.hookSpecificOutput?.permissionDecisionReason).toContain("ctx_fetch_and_index");
+      expect(main.parsed?.hookSpecificOutput?.permissionDecision).not.toBe("deny");
 
       const subagent = await spawnPreToolUseHook({
         tool_name: "WebFetch",
@@ -1330,3 +1296,8 @@ async function spawnPreToolUseHook(
   try { parsed = JSON.parse(stdout); } catch { /* surface raw */ }
   return { status: r.status, stdout, parsed };
 }
+
+it("passes WebFetch through", () => {
+  const decision = routePreToolUse("WebFetch", { url: "https://x" }, "/tmp", "cursor");
+  expect(decision === null || decision.action !== "deny").toBe(true);
+});

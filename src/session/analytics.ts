@@ -348,7 +348,7 @@ export class AnalyticsEngine {
    * Reads `mcp_tool_call` events, parses the JSON payload, and aggregates:
    *  - call count per tool_name
    *  - median + max of `params.concurrency` (only for tools that take it,
-   *    e.g. ctx_batch_execute, ctx_fetch_and_index). Returns null when the
+   *    e.g. ctx_batch_execute, ctx_search). Returns null when the
    *    tool doesn't carry a concurrency param so callers can render N/A.
    *
    * Best-effort: malformed rows or truncated payloads are skipped silently.
@@ -1276,13 +1276,13 @@ export function getRealBytesStats(opts: {
           } catch { /* old schema */ }
           try {
             // "With context-mode" = the bytes the model paid to ACCESS the
-            // kept-out content: ctx_search (query the index) + ctx_fetch_and_index
+            // kept-out content: ctx_search (query the index) + ctx_search
             // (fetch + index a URL). Sandbox compute (ctx_execute/batch/file) is
             // work-output the model would see regardless — NOT redirect savings —
             // so it is excluded; folding it crushed the bar to a false ~43%.
             const tc = sdb.prepare(
               `SELECT COALESCE(SUM(bytes_returned), 0) AS bytes FROM tool_calls
-               WHERE session_id = ? AND tool IN ('ctx_search', 'ctx_fetch_and_index')`,
+               WHERE session_id = ? AND tool IN ('ctx_search', 'ctx_search')`,
             ).get(opts.sessionId) as { bytes: number } | undefined;
             if (tc?.bytes) bytesReturned += Number(tc.bytes);
           } catch { /* old schema: no tool_calls table */ }
@@ -1326,7 +1326,7 @@ export function getRealBytesStats(opts: {
                WHERE session_id IN (
                  SELECT session_id FROM session_meta WHERE project_dir = ?
                )
-               AND tool IN ('ctx_search', 'ctx_fetch_and_index')`,
+               AND tool IN ('ctx_search', 'ctx_search')`,
             ).get(opts.projectDir) as { bytes: number } | undefined;
             if (tc?.bytes) bytesReturned += Number(tc.bytes);
           } catch { /* old schema: no tool_calls table */ }
@@ -1354,7 +1354,7 @@ export function getRealBytesStats(opts: {
           try {
             const tc = sdb.prepare(
               `SELECT COALESCE(SUM(bytes_returned), 0) AS bytes FROM tool_calls
-               WHERE tool IN ('ctx_search', 'ctx_fetch_and_index')`,
+               WHERE tool IN ('ctx_search', 'ctx_search')`,
             ).get() as { bytes: number } | undefined;
             if (tc?.bytes) bytesReturned += Number(tc.bytes);
           } catch { /* old schema: no tool_calls table */ }
@@ -1395,7 +1395,7 @@ export function getRealBytesStats(opts: {
  * sub-process sessions. Each runs in its OWN, disposable context window (its
  * own session_id) — but all under the SAME worktree DB, because the worktree
  * hash is sha256(cwd) and they share the cwd. Their retrieval (ctx_search /
- * ctx_fetch_and_index returns) entered THOSE windows and was thrown away when
+ * ctx_search returns) entered THOSE windows and was thrown away when
  * each returned its short summary; it never touched the window the user is
  * reading now. So the live-window savings bar must split the worktree by
  * which retrieval actually landed in the user's window:
