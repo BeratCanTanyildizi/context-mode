@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, chmodSync, readFileSync, writeFileSync, readdirSync, symlinkSync, mkdirSync, lstatSync, unlinkSync } from "node:fs";
 import { dirname, resolve, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -528,16 +528,11 @@ if (!process.env.VITEST) {
 if (existsSync(resolve(__dirname, "server.bundle.mjs"))) {
   await import("./server.bundle.mjs");
 } else {
-  // Dev or npm install — full build
-  if (!existsSync(resolve(__dirname, "node_modules"))) {
-    try {
-      execSync("npm install --silent", { cwd: __dirname, stdio: "pipe", timeout: 60000 });
-    } catch { /* best effort */ }
-  }
-  if (!existsSync(resolve(__dirname, "build", "server.js"))) {
-    try {
-      execSync("npx tsc --silent", { cwd: __dirname, stdio: "pipe", timeout: 30000 });
-    } catch { /* best effort */ }
+  if (!existsSync(resolve(__dirname, "node_modules")) || !existsSync(resolve(__dirname, "build", "server.js"))) {
+    process.stderr.write(
+      `[ERROR] context-mode: dependencies not built. Install dependencies, then run the build, in ${__dirname}.\n`,
+    );
+    process.exit(1);
   }
   await import("./build/server.js");
 }

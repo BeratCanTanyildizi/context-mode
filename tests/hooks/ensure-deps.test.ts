@@ -515,54 +515,19 @@ describe("ensure-deps: better-sqlite3 binding self-heal (#408)", () => {
     "utf-8",
   );
 
-  test("references the shared heal helper at scripts/heal-better-sqlite3.mjs", () => {
-    // After dedupe the inline heal is gone — replaced by a reference to
-    // scripts/heal-better-sqlite3.mjs. Accept either a static import or a
-    // dynamic-import path: the helper is lazy-loaded so synthetic test
-    // harnesses (e.g. tests/session-hooks-smoke) that don't ship `scripts/`
-    // alongside `hooks/` don't crash the hook on load.
-    const referencesHelperPath =
-      /["']\.\.\/scripts\/heal-better-sqlite3(?:\.mjs)?["']/.test(ENSURE_DEPS_SRC) ||
-      /scripts[\\/]heal-better-sqlite3\.mjs/.test(ENSURE_DEPS_SRC) ||
-      /heal-better-sqlite3\.mjs/.test(ENSURE_DEPS_SRC);
-    expect(referencesHelperPath).toBe(true);
-    expect(ENSURE_DEPS_SRC).toContain("healBetterSqlite3Binding");
+  test("missing native module is reported and not installed", () => {
+    expect(ENSURE_DEPS_SRC).toContain("better-sqlite3 missing");
+    expect(ENSURE_DEPS_SRC).not.toMatch(/execSync\([^)]*npm/);
   });
 
-  test("calls healBetterSqlite3Binding(...) inside the missing-binding branch", () => {
-    // The else-if guarding against a missing native binary must invoke the
-    // shared helper (not inline its own copy).
-    const anchor = ENSURE_DEPS_SRC.indexOf(
-      "!existsSync(resolve(pkgDir, ...NATIVE_BINARIES[pkg]))",
-    );
-    expect(anchor).toBeGreaterThan(-1);
-    const end = ENSURE_DEPS_SRC.indexOf("\nexport function ensureNativeCompat", anchor);
-    const branch = ENSURE_DEPS_SRC.slice(anchor, end === -1 ? ENSURE_DEPS_SRC.length : end);
-    expect(/healBetterSqlite3Binding\s*\(/.test(branch)).toBe(true);
-
-    // Inline 3-layer heal must be gone — no `npm rebuild better-sqlite3`,
-    // no direct `prebuild-install` resolve, no manual process.execPath
-    // spawn here. The helper owns all of that now.
-    expect(/\brebuild\s+better-sqlite3\b/.test(branch)).toBe(false);
-    expect(/prebuild-install/.test(branch)).toBe(false);
-    expect(/process\.execPath/.test(branch)).toBe(false);
-  });
-
-  test("ABI-mismatch rebuild path in ensureNativeCompat() remains intact", () => {
-    // Regression guard — the ABI-mismatch heal (separate from #408's
-    // missing-binding heal) MUST keep using `npm rebuild better-sqlite3
-    // --ignore-scripts=false` for the cached-binary fallback flow.
+  test("ABI-mismatch path reports the error and does not rebuild", () => {
+    expect(ENSURE_DEPS_SRC).toContain("function reportMissingNative");
     expect(
       /\brebuild\s+better-sqlite3\s+--ignore-scripts=false/.test(ENSURE_DEPS_SRC),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       /export function ensureNativeCompat\s*\(/.test(ENSURE_DEPS_SRC),
     ).toBe(true);
-    // The rebuild appears at least twice (skipProbe path + probe-failed path).
-    const rebuildCount = (ENSURE_DEPS_SRC.match(
-      /\brebuild\s+better-sqlite3\s+--ignore-scripts=false/g,
-    ) || []).length;
-    expect(rebuildCount).toBeGreaterThanOrEqual(2);
   });
 
   test("modern skip-probe branch treats missing ABI cache as rebuild-required", () => {
@@ -572,9 +537,29 @@ describe("ensure-deps: better-sqlite3 binding self-heal (#408)", () => {
     expect(probeStart).toBeGreaterThan(branchStart);
     const branch = ENSURE_DEPS_SRC.slice(branchStart, probeStart);
 
-    expect(branch).toContain("rebuild better-sqlite3 --ignore-scripts=false");
+    expect(branch).toContain("reportMissingNative(pluginRoot)");
     expect(branch).toContain("copyFileSync(binaryPath, abiCachePath)");
     expect(branch).not.toMatch(/if\s*\(\s*!\s*existsSync\(binaryPath\)\s*\)/);
     expect(branch).not.toContain("binding present");
+  });
+});
+
+describe("ensure-deps offline", () => {
+  test("ensure-deps reports missing better-sqlite3 without installing", () => {
+    const root = createTempRoot();
+    const ensureDepsAbs = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "hooks", "ensure-deps.mjs");
+    const runner = `
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+await mod.ensureDeps(process.argv[3]);
+`;
+    const runnerPath = join(root, "_runner.mjs");
+    writeFileSync(runnerPath, runner, "utf-8");
+    const result = spawnSync("node", [runnerPath, ensureDepsAbs, root], {
+      encoding: "utf-8",
+      timeout: 15_000,
+    });
+    expect(result.stderr ?? "").toContain("better-sqlite3 missing");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/npm(\.cmd)? (install|rebuild)/);
   });
 });

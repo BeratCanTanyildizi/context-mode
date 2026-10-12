@@ -2898,11 +2898,9 @@ describe("better-sqlite3 binding self-heal (#408)", () => {
 
   // ── doctor(): bindings-missing hint ────────────────────────────────
   describe("doctor: bindings-missing hint", () => {
-    it("hint mentions `npm install better-sqlite3` as the primary remedy", () => {
-      // On Windows `npm rebuild` falls through to node-gyp without MSVC,
-      // while `npm install` re-runs prebuild-install and pulls a prebuilt.
+    it("hint mentions installing the better-sqlite3 package as the primary remedy", () => {
       const block = ftsCatchBlock();
-      expect(block).toContain("npm install better-sqlite3");
+      expect(block).toContain("install the better-sqlite3 package");
     });
 
     it("hint explains the Windows / prebuild-install root cause", () => {
@@ -2912,11 +2910,9 @@ describe("better-sqlite3 binding self-heal (#408)", () => {
       expect(mentionsRootCause).toBe(true);
     });
 
-    it("retains `npm rebuild better-sqlite3` as a non-Windows fallback", () => {
-      // Existing rebuild hint is still valid on Linux/macOS where the
-      // toolchain is present. The fix only augments — does not delete.
+    it("retains a native-module rebuild hint as a non-Windows fallback", () => {
       const block = ftsCatchBlock();
-      expect(block).toContain("npm rebuild better-sqlite3");
+      expect(block).toContain("rebuild the native module");
     });
 
     it("bindings-error detection branches on the bindings error message", () => {

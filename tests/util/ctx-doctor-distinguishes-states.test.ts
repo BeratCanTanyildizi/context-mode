@@ -71,7 +71,7 @@ describe("doctor() — distinguishes package-missing vs binding-missing (#514)",
       /package[- ]missing/i.test(body) ||
       /engine[- ]?mismatch/i.test(body) ||
       /engines field/i.test(body) ||
-      /npm install better-sqlite3 --no-optional/.test(body);
+      /install the better-sqlite3 package/.test(body);
     expect(hasMarker).toBe(true);
   });
 
@@ -82,7 +82,7 @@ describe("doctor() — distinguishes package-missing vs binding-missing (#514)",
     // locate the bindings file" detection and the npm rebuild hint
     // both belong to #408 and must not be removed.
     expect(body).toMatch(/Could not locate the bindings file/);
-    expect(body).toMatch(/npm rebuild better-sqlite3/);
+    expect(body).toMatch(/rebuild the native module/);
   });
 
   it("emits two different remediation commands for the two states", () => {
@@ -90,8 +90,8 @@ describe("doctor() — distinguishes package-missing vs binding-missing (#514)",
     // package-missing recovery: `npm install better-sqlite3 --no-optional`
     // binding-missing recovery: `npm rebuild better-sqlite3` (or the
     // primary `npm install better-sqlite3` from #408).
-    const hasInstallNoOptional = /npm install better-sqlite3[^"`]*--no-optional/.test(body);
-    const hasRebuild = /npm rebuild better-sqlite3/.test(body);
+    const hasInstallNoOptional = /install the better-sqlite3 package/.test(body);
+    const hasRebuild = /rebuild the native module/.test(body);
     expect(hasInstallNoOptional).toBe(true);
     expect(hasRebuild).toBe(true);
   });

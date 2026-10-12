@@ -6,7 +6,7 @@
  *
  * Pattern: same as suppress-stderr.mjs — imported at the top of every
  * hook that needs native modules. Fast path: existsSync check (~0.1ms).
- * Slow path: npm install (first run only, ~5-30s).
+ * Slow path: report a missing native module. This fork does not install it.
  *
  * Also handles ABI compatibility (#148, #203): when the current Node.js
  * version differs from the one better-sqlite3 was compiled against,
@@ -22,7 +22,7 @@
 import { existsSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,15 +34,10 @@ const root = resolve(__dirname, "..");
 // `scripts/heal-better-sqlite3.mjs` — degrade to a no-op instead of
 // crashing the hook with ERR_MODULE_NOT_FOUND. Best-effort posture
 // matches the rest of this module.
-async function healBetterSqlite3Binding(pkgRoot) {
-  try {
-    const helperPath = resolve(__dirname, "..", "scripts", "heal-better-sqlite3.mjs");
-    if (!existsSync(helperPath)) return { healed: false, reason: "helper-missing" };
-    const mod = await import(pathToFileURL(helperPath).href);
-    return mod.healBetterSqlite3Binding(pkgRoot);
-  } catch {
-    return { healed: false, reason: "helper-error" };
-  }
+function reportMissingNative(dir) {
+  process.stderr.write(
+    `[ERROR] context-mode: better-sqlite3 missing or ABI-mismatched. Rebuild the native module in ${dir}.\n`,
+  );
 }
 
 const NATIVE_DEPS = ["better-sqlite3"];
@@ -64,27 +59,14 @@ function hasModernSqlite() {
   return major > 22 || (major === 22 && minor >= 5);
 }
 
-export async function ensureDeps() {
+export async function ensureDeps(pkgRoot = root) {
   // Bun ships bun:sqlite and never needs better-sqlite3
   if (typeof globalThis.Bun !== "undefined") return;
   for (const pkg of NATIVE_DEPS) {
-    const pkgDir = resolve(root, "node_modules", pkg);
-    if (!existsSync(pkgDir)) {
-      // Package not installed at all
-      try {
-        execSync(`${process.platform === "win32" ? "npm.cmd" : "npm"} install ${pkg} --no-package-lock --no-save --silent`, {
-          cwd: root,
-          stdio: "pipe",
-          timeout: 120000,
-          shell: true,
-        });
-      } catch { /* best effort — hook degrades gracefully without DB */ }
-    } else if (!existsSync(resolve(pkgDir, ...NATIVE_BINARIES[pkg]))) {
-      // Package installed but native binary missing (e.g., npm ignore-scripts=true,
-      // or Windows where `npm rebuild` falls through to node-gyp without MSVC — #408).
-      // Delegate to the shared 3-layer heal (single source of truth, also used by
-      // scripts/postinstall.mjs).
-      try { await healBetterSqlite3Binding(root); } catch { /* helper already best-effort */ }
+    const pkgDir = resolve(pkgRoot, "node_modules", pkg);
+    const binaryPath = resolve(pkgDir, ...(NATIVE_BINARIES[pkg] ?? []));
+    if (!existsSync(pkgDir) || !existsSync(binaryPath)) {
+      reportMissingNative(pkgRoot);
     }
   }
 }
@@ -185,21 +167,11 @@ export function ensureNativeCompat(pluginRoot) {
 
     if (skipProbe) {
       // Seed the ABI cache from a working binary before falling back to rebuild;
-      // otherwise a missing cache forces npm rebuild on every hook invocation.
       if (existsSync(binaryPath) && probeNativeInProcess(pluginRoot)) {
         copyFileSync(binaryPath, abiCachePath);
         return;
       }
-      execSync(`${process.platform === "win32" ? "npm.cmd" : "npm"} rebuild better-sqlite3 --ignore-scripts=false`, {
-        cwd: pluginRoot,
-        stdio: "pipe",
-        timeout: 60000,
-        shell: true,
-      });
-      codesignBinary(binaryPath);
-      if (existsSync(binaryPath)) {
-        copyFileSync(binaryPath, abiCachePath);
-      }
+      reportMissingNative(pluginRoot);
       return;
     }
 
@@ -208,17 +180,7 @@ export function ensureNativeCompat(pluginRoot) {
       // Load succeeded — cache the working binary for this ABI
       copyFileSync(binaryPath, abiCachePath);
     } else {
-      // ABI mismatch or missing native binary — rebuild for current Node version
-      execSync(`${process.platform === "win32" ? "npm.cmd" : "npm"} rebuild better-sqlite3 --ignore-scripts=false`, {
-        cwd: pluginRoot,
-        stdio: "pipe",
-        timeout: 60000,
-        shell: true,
-      });
-      codesignBinary(binaryPath);
-      if (existsSync(binaryPath) && probeNativeInChildProcess(pluginRoot)) {
-        copyFileSync(binaryPath, abiCachePath);
-      }
+      reportMissingNative(pluginRoot);
     }
   } catch {
     /* best effort — caller will report the error on first DB access */

@@ -639,7 +639,7 @@ async function doctor(): Promise<number> {
             "\n  V8 madvise(MADV_DONTNEED) SIGSEGV in better-sqlite3 (1-4/hour)." +
             "\n  Refs: https://github.com/nodejs/node/issues/62515" +
             "\n        https://github.com/mksglu/context-mode/issues/564" +
-            "\n  Fix:  nvm install 22.5 && nvm use 22.5 && npm install -g context-mode" +
+            "\n  Fix:  nvm install 22.5 && nvm use 22.5, then install context-mode for the current user" +
             "\n  Or:   curl -fsSL https://bun.sh/install | bash && bun add -g context-mode",
           ),
       );
@@ -1003,8 +1003,7 @@ async function doctor(): Promise<number> {
           color.dim(
             `\n  Path: ${bsqPackageDir}` +
             "\n  Root cause: npm silently skipped better-sqlite3 because the package's `engines` field excluded the running Node (issue #514, e.g. Node 26 vs better-sqlite3@12.x)." +
-            `\n  Try (primary): cd "${pluginRootForDoctor}" && npm install better-sqlite3 --no-optional` +
-            "\n  Try (fallback): /context-mode:ctx-upgrade",
+            `\n  Try: install the better-sqlite3 package in ${pluginRootForDoctor}`,
           ),
       );
     } else if (message.includes("Cannot find module") || message.includes("MODULE_NOT_FOUND")) {
@@ -1026,15 +1025,14 @@ async function doctor(): Promise<number> {
             ` — ${message}` +
             color.dim(
               "\n  Root cause: prebuild-install was likely not on PATH, so install fell through to node-gyp without an MSVC toolchain (Windows)." +
-              "\n  Try (primary): npm install better-sqlite3   # re-resolves the dep tree and re-links the prebuild-install bin shim to fetch a prebuilt binary" +
-              "\n  Try (fallback): npm rebuild better-sqlite3",
+              "\n  Try: rebuild the native module in the plugin directory",
             ),
         );
       } else {
         p.log.error(
           color.red("FTS5 / better-sqlite3: FAIL") +
             ` — ${message}` +
-            color.dim("\n  Try: npm rebuild better-sqlite3"),
+            color.dim("\n  Try: rebuild the native module in the plugin directory"),
         );
       }
     }
